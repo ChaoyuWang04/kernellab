@@ -14,7 +14,7 @@ _cache: dict = {}
 
 
 def configure(**p):
-    """klab sweep 用:改分块常量并清掉已编译缓存。"""
+    """扫参用:改分块常量并清掉已编译缓存。"""
     globals().update({k: int(v) for k, v in p.items()})
     _cache.clear()
 
@@ -53,25 +53,5 @@ def _kernel(a, b):
     return _cache[key]
 
 
-def make_inputs(case, device):
-    m, n, k = int(case["m"]), int(case["n"]), int(case["k"])
-    dtype = getattr(torch, case.get("dtype", "float16"))
-    g = torch.Generator(device=device).manual_seed(0)
-    a = torch.randn(m, k, device=device, dtype=torch.float32, generator=g).to(dtype)
-    b = torch.randn(k, n, device=device, dtype=torch.float32, generator=g).to(dtype)
-    return {"a": a, "b": b}
-
-
-def run(a, b):
+def matmul(a, b):
     return _kernel(a, b)(a, b)
-
-
-def reference(a, b):
-    return (a.float() @ b.float()).to(a.dtype)
-
-
-def workload(case, a, b):
-    M, K = a.shape
-    N = b.shape[1]
-    e = a.element_size()
-    return {"flops": 2 * M * N * K, "bytes": (M * K + K * N + M * N) * e}

@@ -32,8 +32,11 @@ def tk_macro(major: int, minor: int) -> str:
     return "KITTENS_SM80"
 
 
-def load_extension(name: str, kernel_file: str, sources: list[str], tk: bool = False, extra_cuda_cflags: list[str] | None = None):
-    kdir = Path(kernel_file).resolve().parent
+def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = False, extra_cuda_cflags: list[str] | None = None):
+    """从 specs/<名>/spec.py 调用:编译 kernels/<名>/ 下的 sources。"""
+    from klab.harness.spec import kernel_dir_of
+
+    kdir = kernel_dir_of(Path(spec_file).resolve().parent)
     major, minor = _arch()
     arch = f"sm_{major}{minor}"
     build = Path(os.path.expanduser(f"~/.cache/klab/{name}-{arch}"))
@@ -44,7 +47,7 @@ def load_extension(name: str, kernel_file: str, sources: list[str], tk: bool = F
               f"-gencode=arch=compute_{major}{minor}{suffix},code=sm_{major}{minor}{suffix}", "-lineinfo"]
     includes: list[str] = []
     if tk:
-        root = os.path.expanduser(os.environ.get("KLAB_TK_ROOT") or str(Path(kernel_file).resolve().parents[2] / "envs" / "tk" / "ThunderKittens"))  # 环境变量里可能带 ~
+        root = os.path.expanduser(os.environ.get("KLAB_TK_ROOT") or str(kdir.parents[1] / "envs" / "tk" / "ThunderKittens"))  # 环境变量里可能带 ~
         if not Path(root, "include", "kittens.cuh").exists():
             raise SystemExit(f"找不到 ThunderKittens:{root}(先跑 klab setup --toolchain tk)")
         includes += [f"{root}/include", f"{root}/prototype"]

@@ -20,6 +20,13 @@ def _peak_for_dtype(cfg: TargetConfig, dtype: str) -> float | None:
     return None
 
 
+def _speedup(x) -> str:
+    if not x:
+        return "-"
+    color = "green" if x >= 1.0 else ("yellow" if x >= 0.7 else "red")
+    return f"[{color}]{x:.2f}x[/]"
+
+
 def print_result(json_path: Path, cfg: TargetConfig) -> bool:
     data = json.loads(json_path.read_text())
     dev = data["device"]
@@ -39,7 +46,7 @@ def print_result(json_path: Path, cfg: TargetConfig) -> bool:
         console.print(t)
     elif data["mode"] == "bench":
         peak_bw = cfg.peaks.get("peak_gbps")
-        t = Table("case", "median ms", "p10", "p90", "GB/s", "%BW", "TFLOPS", "%FP")
+        t = Table("case", "median ms", "p10", "p90", "GB/s", "%BW", "TFLOPS", "%FP", "torch 参考 ms", "vs torch")
         cases = {c["name"]: c for c in data.get("cases", [])}
         for r in data["results"]:
             dtype = cases.get(r["case"], {}).get("dtype", "float32")
@@ -48,6 +55,8 @@ def print_result(json_path: Path, cfg: TargetConfig) -> bool:
                 r["case"], f"{r['median_ms']:.4f}", f"{r['p10_ms']:.4f}", f"{r['p90_ms']:.4f}",
                 f"{r['gbps']:.1f}", f"{100 * r['gbps'] / peak_bw:.0f}%" if peak_bw else "-",
                 f"{r['tflops']:.2f}", f"{100 * r['tflops'] / peak_fp:.1f}%" if peak_fp else "-",
+                f"{r['ref_median_ms']:.4f}" if "ref_median_ms" in r else "-",
+                _speedup(r.get("speedup_vs_ref")),
             )
         console.print(t)
         if peak_bw:

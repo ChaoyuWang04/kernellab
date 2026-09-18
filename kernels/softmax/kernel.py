@@ -16,27 +16,10 @@ def softmax_kernel(x_ptr, out_ptr, stride_row, n_cols, BLOCK: tl.constexpr):
     tl.store(out_ptr + row * stride_row + offs, (num / den).to(out_ptr.dtype.element_ty), mask=mask)
 
 
-def make_inputs(case, device):
-    rows, cols = int(case["rows"]), int(case["cols"])
-    dtype = getattr(torch, case.get("dtype", "float32"))
-    g = torch.Generator(device=device).manual_seed(0)
-    x = torch.randn(rows, cols, device=device, dtype=torch.float32, generator=g).to(dtype)
-    return {"x": x}
-
-
-def run(x):
+def softmax(x):
     rows, cols = x.shape
     out = torch.empty_like(x)
     BLOCK = triton.next_power_of_2(cols)
     num_warps = 4 if BLOCK < 2048 else (8 if BLOCK < 8192 else 16)
     softmax_kernel[(rows,)](x, out, x.stride(0), cols, BLOCK=BLOCK, num_warps=num_warps)
     return out
-
-
-def reference(x):
-    return torch.softmax(x.float(), dim=-1).to(x.dtype)
-
-
-def workload(case, x):
-    rows, cols = x.shape
-    return {"flops": 5 * rows * cols, "bytes": 2 * rows * cols * x.element_size()}

@@ -11,6 +11,14 @@
   ],
   "tasks": [
     {
+      "label": "klab: run 当前算子(check → bench → ncu)",
+      "type": "shell",
+      "command": "uv run klab run \"${fileDirname}\" --target ${input:target}",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
       "label": "klab: check 当前算子",
       "type": "shell",
       "command": "uv run klab check \"${fileDirname}\" --target ${input:target}",

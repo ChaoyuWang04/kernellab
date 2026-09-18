@@ -96,6 +96,23 @@ def do_check(spec: KernelSpec, mod, cases: list[dict]) -> list[dict]:
     return results
 
 
+def _time_fn(fn, scratch, warmup: int, iters: int) -> float:
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    ts = []
+    for _ in range(iters):
+        if scratch is not None:
+            scratch.zero_()
+        start.record()
+        fn()
+        end.record()
+        torch.cuda.synchronize()
+        ts.append(start.elapsed_time(end))
+    return statistics.median(ts)
+
+
 def do_bench(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, flush: bool) -> list[dict]:
     results = []
     scratch = torch.empty(L2_FLUSH_BYTES, dtype=torch.uint8, device="cuda") if flush else None
@@ -116,11 +133,15 @@ def do_bench(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, 
             times_ms.append(start.elapsed_time(end))
         times_ms.sort()
         med = statistics.median(times_ms)
+        # torch 参考实现同样计时(同样刷 L2),作为「相对 torch」的标尺;它背后多半是 cuBLAS / torch 融合 kernel
+        ref_ms = _time_fn(lambda: mod.reference(**inputs), scratch, max(3, warmup // 2), max(10, iters // 3))
         w = mod.workload(case, **inputs)
         r = {
             "case": case["name"],
             "iters": iters,
             "median_ms": med,
+            "ref_median_ms": ref_ms,
+            "speedup_vs_ref": (ref_ms / med) if med else 0.0,
             "min_ms": times_ms[0],
             "p10_ms": times_ms[int(0.1 * (iters - 1))],
             "p90_ms": times_ms[int(0.9 * (iters - 1))],
@@ -132,7 +153,7 @@ def do_bench(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, 
         results.append(r)
         print(
             f"[bench] {case['name']:<12} median {med:8.4f} ms  p10 {r['p10_ms']:8.4f}  p90 {r['p90_ms']:8.4f}"
-            f"  {r['gbps']:8.1f} GB/s  {r['tflops']:7.2f} TFLOPS",
+            f"  {r['gbps']:8.1f} GB/s  {r['tflops']:7.2f} TFLOPS  torch参考 {ref_ms:8.4f} ms ({r['speedup_vs_ref']:.2f}x)",
             flush=True,
         )
     return results
@@ -186,7 +207,7 @@ def do_sweep(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kernel", required=True)
+    ap.add_argument("--kernel", required=True, help="specs/<名> 目录(相对仓库根)")
     ap.add_argument("--mode", choices=["check", "bench", "ncu", "sweep"], required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--case", action="append", default=None)

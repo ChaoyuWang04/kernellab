@@ -12,7 +12,7 @@ NUM_STAGES, NUM_WARPS = 4, 8
 
 
 def configure(**p):
-    """klab sweep 用:把一组分块参数写进模块常量(run() 每次都读它们)。"""
+    """扫参用:把一组分块参数写进模块常量(matmul() 每次都读它们)。"""
     globals().update({k: int(v) for k, v in p.items()})
 
 
@@ -53,16 +53,7 @@ def matmul_kernel(
     tl.store(c_ptrs, acc.to(c_ptr.dtype.element_ty), mask=mask)
 
 
-def make_inputs(case, device):
-    m, n, k = int(case["m"]), int(case["n"]), int(case["k"])
-    dtype = getattr(torch, case.get("dtype", "float16"))
-    g = torch.Generator(device=device).manual_seed(0)
-    a = torch.randn(m, k, device=device, dtype=torch.float32, generator=g).to(dtype)
-    b = torch.randn(k, n, device=device, dtype=torch.float32, generator=g).to(dtype)
-    return {"a": a, "b": b}
-
-
-def run(a, b):
+def matmul(a, b):
     M, K = a.shape
     K2, N = b.shape
     assert K == K2
@@ -75,14 +66,3 @@ def run(a, b):
         num_stages=NUM_STAGES, num_warps=NUM_WARPS,
     )
     return c
-
-
-def reference(a, b):
-    return (a.float() @ b.float()).to(a.dtype)
-
-
-def workload(case, a, b):
-    M, K = a.shape
-    N = b.shape[1]
-    e = a.element_size()
-    return {"flops": 2 * M * N * K, "bytes": (M * K + K * N + M * N) * e}

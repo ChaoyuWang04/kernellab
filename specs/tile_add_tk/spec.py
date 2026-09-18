@@ -1,4 +1,4 @@
-"""ThunderKittens 算子的接法:同 cuda 工具链,多一个 TK include 路径与架构宏(cppext 自动加)。"""
+"""接线:kernels/tile_add_tk/kernel.cu(ThunderKittens)现场 nvcc 编成 torch 扩展,导出 tile_add(A, B)。"""
 import torch
 
 from klab.harness.cppext import load_extension

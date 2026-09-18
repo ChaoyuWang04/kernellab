@@ -1,4 +1,4 @@
-"""裸 CUDA 算子的接法:kernel.cu 由 torch.utils.cpp_extension 在后端用 nvcc 现场编成扩展,编译缓存在 ~/.cache/klab/。"""
+"""接线:kernels/sgemm_cuda/kernel.cu 现场 nvcc 编成 torch 扩展,导出 sgemm(A, B)。"""
 import torch
 
 from klab.harness.cppext import load_extension

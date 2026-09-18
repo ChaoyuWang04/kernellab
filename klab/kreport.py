@@ -198,6 +198,10 @@ def render(run_dir: Path, cfg: TargetConfig, bench: dict | None = None) -> str:
             md.append(f"| bench 中位数 | {b['median_ms']:.4f} ms(p10 {b['p10_ms']:.4f} / p90 {b['p90_ms']:.4f},{b['iters']} 次) | |")
             fp_pct = f"{100 * b['tflops'] / peak_fp:.0f}% of {peak_fp:.0f}" if peak_fp else "-"
             bw_pct = f"{100 * b['gbps'] / peak_bw:.0f}% of {peak_bw:.0f}" if peak_bw else "-"
+            if b.get("ref_median_ms"):
+                x = b["speedup_vs_ref"]
+                tag = "快于 torch" if x >= 1.0 else ("接近 torch" if x >= 0.85 else "慢于 torch")
+                md.append(f"| **相对 torch 参考** | **{x:.2f}×**({tag}) | torch 参考 {b['ref_median_ms']:.4f} ms,多半是 cuBLAS / torch 融合 kernel |")
             md.append(f"| 算力 | {b['tflops']:.1f} TFLOPS | {fp_pct} |")
             md.append(f"| 带宽 | {b['gbps']:.1f} GB/s | {bw_pct} |")
             if b.get("bytes") and peak_fp and peak_bw:

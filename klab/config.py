@@ -46,3 +46,15 @@ class TargetConfig:
 def load_targets(root: Path) -> dict[str, TargetConfig]:
     data = tomllib.loads((root / "targets.toml").read_text())
     return {n: TargetConfig.from_dict(n, d) for n, d in data.get("targets", {}).items()}
+
+
+def default_target(root: Path) -> str:
+    """targets.toml 的 [defaults] target;没写就取第一个非 local 的后端。"""
+    data = tomllib.loads((root / "targets.toml").read_text())
+    d = data.get("defaults", {}).get("target")
+    if d:
+        return d
+    for n, t in data.get("targets", {}).items():
+        if t.get("kind") != "local":
+            return n
+    raise SystemExit("targets.toml 里没有可用后端")

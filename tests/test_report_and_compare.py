@@ -58,7 +58,7 @@ def test_compare_collects_latest_per_kernel_target(tmp_path):
             "kernel": kernel, "toolchain": "triton", "mode": "bench",
             "device": {"device": "X", "cc": "9.0"},
             "cases": [{"name": "c", "dtype": "float16"}],
-            "results": [{"case": "c", "median_ms": ms, "tflops": 1.0, "gbps": 1.0}],
+            "results": [{"case": "c", "median_ms": ms, "tflops": 1.0, "gbps": 1.0, "ref_median_ms": 1.0, "speedup_vs_ref": 1.0 / ms}],
         }))
 
     mk("20260918-100000", "matmul", "5090home", 2.0)

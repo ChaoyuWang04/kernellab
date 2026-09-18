@@ -1,6 +1,12 @@
 # 执行后端登记表。klab 的每条命令都用 --target <名字> 显式选一个。
 # kind = ssh   : 任何能 ssh 上去的机器(home lab、vast、runpod、autodl……)
 # kind = local : 在当前机器上直接跑(用于在盒子上调试 harness 本身)
+#
+# 选后端的规则(agent 照此办,用户点名优先):默认 5090home;算子 requires.features 里有 5090 没有的特性
+# (wgmma / tma / cluster / tcgen05 / tmem),或用户点名要 H100 / B200 时,才去 Modal。
+
+[defaults]
+target = "5090home"
 # kind = modal : Modal 云 GPU,gpu 字段选卡型(H100 / H200 / B200 / A100-80GB / L40S),凭据读 ~/.modal.toml
 
 [targets.5090home]

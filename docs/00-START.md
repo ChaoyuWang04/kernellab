@@ -1,6 +1,6 @@
 # kernellab 维护手册
 
-> **交接语**:这是一个「Mac 上写 GPU 算子、远端机器上跑、性能指标回流 Mac」的个人实验台。接手先读完本页,再按需要看 README 的对应节。改动前跑 `uv run pytest`,改了跑 GPU 的部分再按第六节的矩阵上机验证。
+> **交接语**:这是一个「Mac 上写 GPU 算子、远端机器上跑、性能指标回流 Mac」的个人实验台,**面向 agent 调用**。操作流程(用户丢来一个 kernel时该做什么)在 [01-AGENT-PLAYBOOK.md](01-AGENT-PLAYBOOK.md);本页讲系统怎么运转、改哪里、怎么验证。改动前跑 `uv run pytest`,改了跑 GPU 的部分再按第六节的矩阵上机验证。
 
 ## 一、为什么有这个项目
 
@@ -16,9 +16,9 @@
 
 1. **三层分离**:代码住在 Mac(本仓库,git 管理);环境定义在仓库里(`envs/<工具链>/`);后端只回答「在哪跑」(`targets.toml`)。任何新功能先问它属于哪一层。
 2. **Target 接口只有四个方法**:`sync / run / fetch / shell`。编译、跑、测速、NCU、扫参全是 `run()` 之上的命令串,**不进后端类**。这是插拔成立的前提,加后端时不得往接口里加方法。
-3. **算子契约与 DSL 无关**:`kernel.py` 只暴露 `make_inputs / run / reference / workload`(可选 `configure`),harness 不认识任何 DSL。DSL 差异全部落在 `toolchains/<name>.py`(怎么装)和算子自己的 `kernel.py`(怎么调)。
+3. **用户的目录与 agent 的目录分开**:`kernels/<名>/` 只有用户写的算子源码,harness 不动它;`specs/<名>/` 是 agent 写的接线(`meta.toml` + `spec.py` + `baselines/`)。契约只有 `make_inputs / run / reference / workload`(可选 `configure`),与 DSL 无关;DSL 差异落在 `toolchains/<name>.py`(怎么装)和 `spec.py`(怎么调)。
 4. **文件即数据**:`runs/<id>/result.json` 是唯一的结果真源,报告、对比表、基线都从它推导;不引入数据库、不做网页。
-5. **显式优先**:后端用 `--target` 手选;门禁只负责拒绝不匹配的组合并提示。`--target auto` 用户 2026-09-18 明确决定先不做。
+5. **显式优先,有默认值**:后端用 `--target` 选,不给就用 `targets.toml` 的 `[defaults] target`(5090home);选择规则写在 `targets.toml` 注释里。门禁只负责拒绝不匹配的组合并提示。`--target auto` 用户 2026-09-18 明确决定先不做。
 6. **不放凭据**:Modal 读 `~/.modal.toml`,SSH 读 `~/.ssh/config`,仓库里没有也不允许有 token。
 7. **不为未验证的平台写代码**:租用机、昇腾都还没上过机,只留设计说明(第八节),不写猜测性的适配器。
 
@@ -35,7 +35,7 @@ runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details
       │
       ├─ klab report   → 体检单(kreport.py)
       ├─ klab compare  → 跨算子 / 跨后端表(compare.py)
-      └─ klab baseline → kernels/<名>/baselines/<后端>.json,bench 时报差
+      └─ klab baseline → specs/<名>/baselines/<后端>.json,bench 时报差
 ```
 
 远端只有三样东西:`<root>/repo`(仓库副本)、`<root>/envs/<工具链>`(uv venv,SSH 后端)或镜像(Modal)、`<root>/runs`(结果)。远端不保存任何不能从 Mac 重建的状态,机器丢了重跑 `klab setup` 即可。
@@ -52,12 +52,13 @@ runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details
 | `klab/targets/local.py` | 在 GPU 盒子上直接跑,调试 harness 用 | |
 | `klab/toolchains/` | 每种工具链一个模块:`setup_script()` + 可选 `APT / MODAL_RUN_COMMANDS / MODAL_ENV / local_prepare()` | 纯 pip 的直接复用 `_pip.py` |
 | `klab/harness/runner.py` | **在后端跑**;check / bench / ncu / sweep 四种模式;`ARCH_FEATURES` 门禁表 | 只能依赖 torch 与标准库 |
-| `klab/harness/spec.py` | `meta.toml` 与 `kernel.py` 的契约 | 契约变了要同步 README「写一个算子」与 tests |
+| `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入用户的 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
 | `klab/harness/probe.py` | 设备属性 + 实测带宽 / matmul 吞吐 | 实测值手工填回 `targets.toml` 的 `peak_*` |
 | `klab/harness/cppext.py` | cuda / tk 工具链的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这 |
 | `klab/kreport.py` | 体检单:raw CSV + details 文本 + 最近一次 bench → markdown | 指标名依赖 NCU 版本,tests 里守着 |
 | `klab/report.py`、`klab/compare.py` | 终端表格;对比表 | |
-| `kernels/<名>/` | 算子:`meta.toml` + `kernel.py`(+ `.cu`、`_vendor/`、`baselines/`) | `_vendor/` 里是第三方原文,不改 |
+| `kernels/<名>/` | **用户的**算子源码(`kernel.py` / `kernel.cu` / `_vendor/`) | 不改、不加文件 |
+| `specs/<名>/` | **agent 的**接线:`meta.toml` + `spec.py` + `baselines/` | 生成规则见 playbook 第 1 节 |
 | `envs/<工具链>/` | `requirements.txt` + `torch-index.txt`;`envs/tk/ThunderKittens/` 是 Mac 上的克隆,gitignore | |
 | `targets.toml` | 后端登记与峰值 | 加后端要同步 `.vscode/tasks.json` 的下拉(tests 守) |
 | `tests/` | 不需要 GPU 的本地测试,夹具是一次真实的 5090 NCU 运行 | |
@@ -70,13 +71,14 @@ runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details
 | `klab targets` | 列后端 | ✅ |
 | `klab setup --target T --toolchain X` | 后端装环境(SSH:uv venv;Modal:触发镜像构建);幂等 | ✅ 五种工具链 × 两后端 |
 | `klab probe --target T` | 设备属性、实测拷贝带宽与 fp16 matmul 吞吐 | ✅ |
+| `klab run <算子> [--target T]` | 一条龙:check → bench → ncu(第一个 case)→ 体检单;agent 默认用它 | ✅ |
 | `klab check <算子> --target T` | 与 `reference()` 逐 case 比对;先过 `requires` 门禁 | ✅ |
-| `klab bench <算子> --target T` | 先 check;预热、每次刷 L2、event 计时、中位数与分位数、对峰值百分比;有基线则报差 | ✅ |
+| `klab bench <算子> --target T` | 先 check;预热、每次刷 L2、event 计时、中位数与分位数、对峰值百分比、**对 torch 参考的倍数**;有基线则报差 | ✅ |
 | `klab ncu <算子> --target T` | 后端跑 ncu(默认七个 section,`--full` 全量),拉回 `.ncu-rep`、文本、CSV,自动渲染体检单 | ✅ |
 | `klab report <run_dir>` | 重渲染体检单 | ✅ |
 | `klab compare [算子...] [-t 后端]` | 每个 (算子, 后端) 取最新 bench,出表 | ✅ |
 | `klab sweep <算子> --target T` | 按 `[sweep]` 笛卡尔积逐组 check + bench,失败组不中断 | ✅ |
-| `klab baseline <算子> --target T` | 钉基线到 `kernels/<名>/baselines/<后端>.json` | ✅ |
+| `klab baseline <算子> --target T` | 钉基线到 `specs/<名>/baselines/<后端>.json` | ✅ |
 | `klab exec "<shell>" --target T` | 在后端 repo 目录执行命令(诊断) | ✅ |
 | `klab sh --target T` | 交互 shell(仅 SSH) | ✅ |
 | `klab open <run_dir>` | 用本地 Nsight Compute 打开 `.ncu-rep` | ✅ |
@@ -98,7 +100,7 @@ runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details
 | `klab/harness/cppext.py` | pytest | `klab check kernels/sgemm_cuda` 与 `kernels/tile_add_tk`,两个后端各一次 |
 | `klab/kreport.py` | pytest(夹具) | `klab report` 一个已有的 ncu 运行目录 |
 | `klab/toolchains/*`、`envs/*` | pytest | 对应后端 `klab setup --toolchain X`,再跑该工具链的样板算子 |
-| 新算子 | pytest(契约检查) | 目标后端 check → bench → ncu 三步,ncu 后确认 `kernel_regex` 只抓到自己的 kernel |
+| 新算子接线(`specs/<名>/`) | pytest(契约与目录结构) | `klab run <名>`,ncu 后确认 `kernel_regex` 只抓到自己的 kernel |
 | 新后端 | pytest(tasks.json 下拉) | setup → probe → vector_add check/bench/ncu |
 | `targets.toml` 峰值 | pytest | 跑一次 `klab probe`,用实测值 |
 | README / 本手册 | 无 | 按第四节的路径核对一遍 |
@@ -146,7 +148,7 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 ## 九、维护规矩
 
 - **README 面向使用,本手册面向维护**:README 讲命令怎么用、算子怎么写;本手册讲为什么这么设计、改哪里、怎么验证、踩过什么坑。同一件事只在一处完整解释,另一处链接。
-- 加后端、加工具链、改契约,三件事必须同步:代码、README 对应节、`tests/`。
+- 加后端、加工具链、改契约,三件事必须同步:代码、README 对应节、`tests/`;改了 agent 的操作流程还要同步 playbook。
 - `targets.toml` 的 `peak_*` 是手填的:`peak_gbps` 取公开规格,`peak_tflops_fp16` 取 `klab probe` 实测,注释里写日期。
 - 决策记录只写「定了什么、谁定的、哪天」,不写论证:
   - 2026-09-18 用户:单独仓库,与 interviewprep 并排;先跑通 Triton。
@@ -154,4 +156,5 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
   - 2026-09-18 用户:NCU 是核心,不做 nsys;要固定模板的体检单。
   - 2026-09-18 用户:`--target auto` 先不做。
   - 2026-09-18 用户:租用机、昇腾等租到后再单独接入。
+  - 2026-09-18 用户:要最纯粹的写 kernel 环境,`kernels/` 只放用户源码,编译、执行、解读都在别处 → 拆出 `specs/`。
 - 提交信息用中文,写清改了哪一层;`runs/`、`.venv/`、`envs/tk/ThunderKittens/` 不进 git。

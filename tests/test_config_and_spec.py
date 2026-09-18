@@ -19,21 +19,36 @@ def test_repo_root_and_targets():
         assert c.kind in ("ssh", "modal", "local")
 
 
-def test_every_kernel_has_valid_meta_and_contract():
-    """每个算子目录:meta.toml 能解析、工具链已登记、kernel.py 静态定义了四个契约函数、每个 case 有 name。"""
-    kdirs = sorted(p for p in (ROOT / "kernels").iterdir() if (p / "meta.toml").exists())
-    assert kdirs, "kernels/ 下没有算子"
-    for k in kdirs:
-        spec = KernelSpec.load(k)
-        assert spec.toolchain in toolchains.REGISTRY, f"{k.name}: 未登记的工具链 {spec.toolchain}"
-        assert spec.cases and all("name" in c for c in spec.cases), f"{k.name}: case 缺 name"
-        assert spec.kernel_regex, f"{k.name}: 缺 kernel_regex(ncu 过滤用)"
-        tree = ast.parse((k / "kernel.py").read_text())
+def test_every_spec_has_valid_meta_contract_and_user_kernel():
+    """specs/<名>:meta.toml 能解析、工具链已登记、spec.py 静态定义四个契约函数、对应 kernels/<名> 存在且不含接线文件。"""
+    sdirs = sorted(p for p in (ROOT / "specs").iterdir() if (p / "meta.toml").exists())
+    assert sdirs, "specs/ 下没有算子接线"
+    for sd in sdirs:
+        spec = KernelSpec.load(sd)
+        assert spec.toolchain in toolchains.REGISTRY, f"{sd.name}: 未登记的工具链 {spec.toolchain}"
+        assert spec.cases and all("name" in c for c in spec.cases), f"{sd.name}: case 缺 name"
+        assert spec.kernel_regex, f"{sd.name}: 缺 kernel_regex(ncu 过滤用)"
+        assert spec.kernel_dir.is_dir(), f"{sd.name}: 缺用户目录 kernels/{sd.name}"
+        assert not (spec.kernel_dir / "meta.toml").exists(), f"kernels/{sd.name} 里不该有 meta.toml(接线放 specs/)"
+        assert not (spec.kernel_dir / "spec.py").exists(), f"kernels/{sd.name} 里不该有 spec.py(接线放 specs/)"
+        tree = ast.parse((sd / "spec.py").read_text())
         fns = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
         for fn in ("make_inputs", "run", "reference", "workload"):
-            assert fn in fns, f"{k.name}/kernel.py 缺 {fn}()"
+            assert fn in fns, f"specs/{sd.name}/spec.py 缺 {fn}()"
         if spec.sweep:
-            assert "configure" in fns, f"{k.name}: 有 [sweep] 但 kernel.py 没有 configure()"
+            assert "configure" in fns, f"{sd.name}: 有 [sweep] 但 spec.py 没有 configure()"
+
+
+def test_every_user_kernel_dir_has_a_spec():
+    kdirs = sorted(p.name for p in (ROOT / "kernels").iterdir() if p.is_dir())
+    for name in kdirs:
+        assert (ROOT / "specs" / name / "meta.toml").exists(), f"kernels/{name} 还没有 specs/{name}/(按 playbook 生成)"
+
+
+def test_default_target_exists():
+    from klab.config import default_target
+
+    assert default_target(ROOT) in load_targets(ROOT)
 
 
 def test_toolchains_registered_and_have_env_specs():

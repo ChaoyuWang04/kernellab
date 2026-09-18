@@ -41,6 +41,7 @@ def collect(root: Path, kernels: list[str] | None, targets: list[str] | None, la
                 "device": d["device"]["device"], "case": r["case"],
                 "dtype": cases.get(r["case"], {}).get("dtype", "float32"),
                 "median_ms": r["median_ms"], "tflops": r["tflops"], "gbps": r["gbps"], "run": run,
+                "speedup_vs_ref": r.get("speedup_vs_ref"),
             })
     rows.sort(key=lambda r: (r["case"], r["kernel"], r["target"]))
     return rows
@@ -50,7 +51,7 @@ def print_table(rows: list[dict], cfgs: dict[str, TargetConfig]) -> None:
     if not rows:
         console.print("runs/ 里没有匹配的 bench 结果")
         return
-    t = Table("case", "kernel", "target", "median ms", "TFLOPS", "%FP", "GB/s", "%BW", "date")
+    t = Table("case", "kernel", "target", "median ms", "vs torch", "TFLOPS", "%FP", "GB/s", "%BW", "date")
     for r in rows:
         cfg = cfgs.get(r["target"])
         peak_fp = peak_bw = None
@@ -59,7 +60,8 @@ def print_table(rows: list[dict], cfgs: dict[str, TargetConfig]) -> None:
             peak_bw = cfg.peaks.get("peak_gbps")
         t.add_row(
             r["case"], f"{r['kernel']} ({r['toolchain']})", r["target"],
-            f"{r['median_ms']:.4f}", f"{r['tflops']:.1f}", f"{100 * r['tflops'] / peak_fp:.0f}%" if peak_fp else "-",
+            f"{r['median_ms']:.4f}", f"{r['speedup_vs_ref']:.2f}x" if r.get("speedup_vs_ref") else "-",
+            f"{r['tflops']:.1f}", f"{100 * r['tflops'] / peak_fp:.0f}%" if peak_fp else "-",
             f"{r['gbps']:.0f}", f"{100 * r['gbps'] / peak_bw:.0f}%" if peak_bw else "-", r["run"][:8],
         )
     console.print(t)

@@ -2,7 +2,7 @@
 
 Mac 上写算子,远端 GPU 上编译、跑、测速、NCU。执行后端可插拔,用 `--target` 显式选。
 
-本文面向使用。要维护或扩展这个项目,先读 **[docs/00-START.md](docs/00-START.md)**(为什么这么设计、目录职责、验证矩阵、踩过的坑、未接入平台怎么接)。本地测试:`uv run pytest`。
+本文面向使用。agent 的操作流程在 **[docs/01-AGENT-PLAYBOOK.md](docs/01-AGENT-PLAYBOOK.md)**,维护与扩展看 **[docs/00-START.md](docs/00-START.md)**。本地测试:`uv run pytest`。
 
 ```text
 Mac VSCode ── klab CLI ──┬── ssh:5090home   (home lab,RTX 5090)
@@ -13,6 +13,8 @@ Mac VSCode ── klab CLI ──┬── ssh:5090home   (home lab,RTX 5090)
 
 三层分离:**代码住在 Mac**(本仓库,git 管理);**环境定义在仓库里**(`envs/<工具链>/`);**后端只回答「在哪跑」**(`targets.toml`)。
 
+用户与 agent 的目录分开:**`kernels/<名>/` 只放用户写的算子源码**;`specs/<名>/` 是 agent 写的接线(工具链、case、参考实现)。
+
 ## 日常用法
 
 ```bash
@@ -20,18 +22,19 @@ uv sync                                        # 首次,装本地 CLI
 uv run klab targets                            # 列后端
 uv run klab setup --target 5090home            # 在后端装 Triton 环境(幂等)
 uv run klab probe --target 5090home            # 设备属性 + 实测拷贝带宽 + fp16 matmul 吞吐
-uv run klab check kernels/softmax --target 5090home    # 正确性
-uv run klab bench kernels/softmax --target 5090home    # 先 check 再测速
-uv run klab ncu   kernels/softmax --target 5090home --case 8192x8192-f16 --open   # NCU,拉回报告并用本地 Nsight Compute 打开
+uv run klab run   softmax                      # 一条龙:check → bench → ncu → 体检单;--target 不给用 targets.toml 的默认后端
+uv run klab check softmax                      # 正确性(<算子> 可写名字、kernels/<名>、specs/<名> 或其中的文件)
+uv run klab bench softmax --target modal-h100  # 先 check 再测速,报「相对 torch 参考」的倍数
+uv run klab ncu   softmax --case 8192x8192-f16 --open   # NCU,拉回报告并用本地 Nsight Compute 打开
 uv run klab sh    --target 5090home            # 进后端 shell(已 cd 到远端 repo)
 uv run klab exec  "nvidia-smi" --target modal-h100   # 在后端执行一段命令(诊断)
 uv run klab report runs/<某次 ncu 运行>          # 重新渲染体检单
 uv run klab compare matmul matmul_tl            # 跨 DSL / 跨后端的 bench 对比表(读 runs/,不联网)
-uv run klab sweep kernels/matmul --target 5090home --case 4096-f16   # 按 meta.toml [sweep] 扫参,列每个 case 最快的几组
-uv run klab baseline kernels/matmul --target 5090home                # 把最新 bench 钉成基线;之后 bench 自动报与基线的差
+uv run klab sweep matmul --case 4096-f16        # 按 meta.toml [sweep] 扫参,列每个 case 最快的几组
+uv run klab baseline matmul                     # 把最新 bench 钉成基线;之后 bench 自动报与基线的差
 ```
 
-VSCode 里打开 `kernel.py`,`Cmd+Shift+B` 或 `Tasks: Run Task` 选 `klab: check / bench / ncu 当前算子`,任务会弹出后端选择框。想绑快捷键,在用户级 `keybindings.json` 加:
+VSCode 里打开 `kernels/<名>/kernel.py`,`Tasks: Run Task` 选 `klab: run 当前算子`(或 check / bench / ncu),任务会弹出后端选择框。想绑快捷键,在用户级 `keybindings.json` 加:
 
 ```json
 { "key": "cmd+k cmd+b", "command": "workbench.action.tasks.runTask", "args": "klab: bench 当前算子" }
@@ -41,28 +44,29 @@ VSCode 里打开 `kernel.py`,`Cmd+Shift+B` 或 `Tasks: Run Task` 选 `klab: chec
 
 ## 写一个算子
 
-一个目录两份文件:
+你只写 `kernels/<名>/`,里面放算子源码(`kernel.py`、`kernel.cu`,可以多文件),暴露一个入口函数。接线由 agent 生成在 `specs/<名>/`:
 
 ```text
-kernels/<name>/
-  meta.toml     工具链、ncu 过滤名、架构要求、容差、case 列表
-  kernel.py     make_inputs / run / reference / workload 四个函数
+kernels/<名>/kernel.py      你的算子(任何 DSL)
+specs/<名>/meta.toml        工具链、ncu 过滤名、架构要求、容差、case 列表、[sweep]
+specs/<名>/spec.py          make_inputs / run / reference / workload(可选 configure)
+specs/<名>/baselines/       klab baseline 钉下的基线
 ```
 
-`kernel.py` 的契约与 DSL 无关:
+`spec.py` 的契约与 DSL 无关:
 
 | 函数 | 作用 |
 |---|---|
 | `make_inputs(case, device) -> dict` | 按 case 造输入,固定种子 |
-| `run(**inputs) -> Tensor` | 调用你的算子 |
-| `reference(**inputs) -> Tensor` | torch 参考实现,check 用 |
-| `workload(case, **inputs) -> {flops, bytes}` | 换算 TFLOPS 与 GB/s |
+| `run(**inputs) -> Tensor` | 调用你的算子(`k = kernel_module(__file__)` 拿到 `kernels/<名>/kernel.py`) |
+| `reference(**inputs) -> Tensor` | 同 dtype 的原生 torch 调用;check 用它比对,bench 用它当「相对 torch」标尺 |
+| `workload(case, **inputs) -> {flops, bytes}` | 按数学定义换算 TFLOPS 与 GB/s |
 
-`meta.toml` 的 `requires.min_cc` 与 `features` 是给后续 `--target auto` 用的:5090 是 sm_120,没有 wgmma / tcgen05 / cluster,Hopper 优先的算子要标出来,到时候自动路由到 Modal 的 H100。
+`meta.toml` 的 `requires.features` 是架构门禁:5090 是 sm_120,没有 wgmma / tcgen05 / cluster,声明了这些特性的算子打 5090 会被拒并提示换 target。
 
 样板(五种工具链各至少一个):
 
-| 目录 | 工具链 | 说明 |
+| 算子 | 工具链 | 说明 |
 |---|---|---|
 | `vector_add`、`softmax` | triton | 最小链路;融合行 softmax |
 | `matmul` | triton | 分块 matmul,声明需要 wgmma(演示门禁),带 `[sweep]` |
@@ -71,11 +75,11 @@ kernels/<name>/
 | `sgemm_cuda` | cuda | 经典共享内存分块 SGEMM(fp32、CUDA core),`.cu` 现场 nvcc 编成 torch 扩展 |
 | `tile_add_tk` | tk | ThunderKittens 烟测:寄存器 tile 的 load / add / store |
 
-`cuda` 与 `tk` 算子的 `kernel.py` 通过 `klab.harness.cppext.load_extension()` 编译同目录的 `.cu`,缓存在后端的 `~/.cache/klab/<名>-<架构>`(Modal 用 Volume 持久化)。
+`cuda` 与 `tk` 的 `spec.py` 通过 `klab.harness.cppext.load_extension()` 编译 `kernels/<名>/` 下的 `.cu`,缓存在后端的 `~/.cache/klab/<名>-<架构>`(Modal 用 Volume 持久化)。
 
 ## 测速方法
 
-预热 → 每次迭代前用 256 MB 的写把 L2 冲干净 → CUDA event 计时 → 取中位数与 p10/p90 → 按 `workload()` 换算带宽与算力 → 对 `targets.toml` 里的峰值算百分比。`--no-flush` 关掉 L2 冲刷(看热缓存表现),`--iters/--warmup` 调次数。
+预热 → 每次迭代前用 256 MB 的写把 L2 冲干净 → CUDA event 计时 → 取中位数与 p10/p90 → 按 `workload()` 换算带宽与算力 → 对 `targets.toml` 里的峰值算百分比 → **同样方法给 `reference()` 计时,报「相对 torch」的倍数**(大于 1 是比 torch 快)。`--no-flush` 关掉 L2 冲刷(看热缓存表现),`--iters/--warmup` 调次数。
 
 `peak_*` 是手填的参考值:`peak_gbps` 取公开规格,`peak_tflops_fp16` 取 `klab probe` 实测的 matmul 吞吐。
 
@@ -117,16 +121,16 @@ Modal 的 H100 容器里 ncu 可用、计数器可读(2026-09-18 实测),但锁�
 `meta.toml` 的 `requires.features` 与 harness 里的 `ARCH_FEATURES` 表匹配。cc 数字不是超集关系:5090 是 sm_120,数字最大,却没有 Hopper 的 `wgmma`、也没有 B200 的 `tcgen05`。所以声明了 `wgmma` 的算子打 5090 会被拒并提示换 target;`--ignore-requires` 可以强行跑(Triton 会退回 mma.sync),用来做跨代对照。
 
 ```bash
-uv run klab check kernels/matmul --target 5090home                    # 拒:sm_120 缺 wgmma
-uv run klab bench kernels/matmul --target 5090home --ignore-requires  # 强行跑,拿对照
-uv run klab bench kernels/matmul --target modal-h100                  # 换后端,原样跑
+uv run klab check matmul                              # 拒:sm_120 缺 wgmma
+uv run klab bench matmul --ignore-requires            # 强行跑,拿对照
+uv run klab bench matmul --target modal-h100          # 换后端,原样跑
 ```
 
 ## 扫参与基线
 
 `meta.toml` 加 `[sweep]`(参数名 = 候选列表),`kernel.py` 提供 `configure(**params)` 把一组参数应用到算子(改全局常量、清编译缓存)。`klab sweep` 在后端按笛卡尔积逐组 check + bench,编译失败或共享内存超限的组记为失败而不中断,最后按 case 列出最快的几组。5090 的共享内存上限是 101376 字节,`BLOCK_N=256` 配 4 级流水会超。
 
-`klab baseline` 把某次 bench 复制到 `kernels/<名>/baselines/<后端>.json`(进 git)。之后同一后端的 `klab bench` 自动打印「现在 / 基线 / 变化」,±3% 以外标色。
+`klab baseline` 把某次 bench 复制到 `specs/<名>/baselines/<后端>.json`(进 git)。之后同一后端的 `klab bench` 自动打印「现在 / 基线 / 变化」,±3% 以外标色。
 
 ## 加一个后端
 

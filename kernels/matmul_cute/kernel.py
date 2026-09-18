@@ -51,16 +51,8 @@ def _build(a, bt, c):
     raise SystemExit(f"matmul_cute 只带了 sm_120 与 sm_90 两份实现,当前卡 cc {major}.{minor}")
 
 
-def make_inputs(case, device):
-    m, n, k = int(case["m"]), int(case["n"]), int(case["k"])
-    dtype = getattr(torch, case.get("dtype", "float16"))
-    g = torch.Generator(device=device).manual_seed(0)
-    a = torch.randn(m, k, device=device, dtype=torch.float32, generator=g).to(dtype)
-    bt = torch.randn(n, k, device=device, dtype=torch.float32, generator=g).to(dtype)
-    return {"a": a, "bt": bt}
-
-
-def run(a, bt):
+def matmul_tn(a, bt):
+    """C = A @ B^T:A (m, k)、bt (n, k) 都是 k-major。"""
     m, k = a.shape
     n = bt.shape[0]
     c = torch.empty(m, n, device=a.device, dtype=a.dtype)
@@ -71,14 +63,3 @@ def run(a, bt):
     dt = {torch.float16: cutlass.Float16, torch.bfloat16: cutlass.BFloat16}[a.dtype]
     fn(_cute(a, dt, 1), _cute(bt, dt, 1), _cute(c, dt, 1))
     return c
-
-
-def reference(a, bt):
-    return (a.float() @ bt.float().t()).to(a.dtype)
-
-
-def workload(case, a, bt):
-    m, k = a.shape
-    n = bt.shape[0]
-    e = a.element_size()
-    return {"flops": 2 * m * n * k, "bytes": (m * k + n * k + m * n) * e}
