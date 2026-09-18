@@ -9,11 +9,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import torch
-from torch.utils.cpp_extension import load
-
 
 def _arch() -> tuple[int, int]:
+    import torch  # 只在后端有;本地 pytest 只用 tk_macro 这类纯函数
+
     return torch.cuda.get_device_capability(0)
 
 
@@ -52,6 +51,8 @@ def load_extension(name: str, kernel_file: str, sources: list[str], tk: bool = F
         cflags += [f"-D{tk_macro(major, minor)}", "-DNDEBUG", "-forward-unknown-to-host-compiler",
                    "-Xcompiler=-Wno-psabi", "-Xcompiler=-fno-strict-aliasing", "-ftemplate-backtrace-limit=0"]
     cflags += extra_cuda_cflags or []
+    from torch.utils.cpp_extension import load
+
     return load(
         name=name,
         sources=[str(kdir / s) for s in sources],

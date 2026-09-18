@@ -2,6 +2,8 @@
 
 Mac 上写算子,远端 GPU 上编译、跑、测速、NCU。执行后端可插拔,用 `--target` 显式选。
 
+本文面向使用。要维护或扩展这个项目,先读 **[docs/00-START.md](docs/00-START.md)**(为什么这么设计、目录职责、验证矩阵、踩过的坑、未接入平台怎么接)。本地测试:`uv run pytest`。
+
 ```text
 Mac VSCode ── klab CLI ──┬── ssh:5090home   (home lab,RTX 5090)
                          ├── ssh:<租的机器> (vast / runpod / autodl,同一套 SshTarget)

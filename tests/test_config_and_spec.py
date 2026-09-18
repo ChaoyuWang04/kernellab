@@ -1,0 +1,66 @@
+"""不需要 GPU 的本地测试:配置、算子契约、工具链登记、体检单渲染、对比表。`uv run pytest`。"""
+import ast
+from pathlib import Path
+
+from klab import toolchains
+from klab.config import load_targets, repo_root
+from klab.harness.spec import KernelSpec
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_repo_root_and_targets():
+    root = repo_root(ROOT)
+    cfgs = load_targets(root)
+    assert "5090home" in cfgs and cfgs["5090home"].kind == "ssh"
+    assert cfgs["modal-h100"].kind == "modal" and cfgs["modal-h100"].gpu == "H100"
+    assert cfgs["modal-h100"].extra.get("ncu_clock_control") == "none"
+    for c in cfgs.values():
+        assert c.kind in ("ssh", "modal", "local")
+
+
+def test_every_kernel_has_valid_meta_and_contract():
+    """每个算子目录:meta.toml 能解析、工具链已登记、kernel.py 静态定义了四个契约函数、每个 case 有 name。"""
+    kdirs = sorted(p for p in (ROOT / "kernels").iterdir() if (p / "meta.toml").exists())
+    assert kdirs, "kernels/ 下没有算子"
+    for k in kdirs:
+        spec = KernelSpec.load(k)
+        assert spec.toolchain in toolchains.REGISTRY, f"{k.name}: 未登记的工具链 {spec.toolchain}"
+        assert spec.cases and all("name" in c for c in spec.cases), f"{k.name}: case 缺 name"
+        assert spec.kernel_regex, f"{k.name}: 缺 kernel_regex(ncu 过滤用)"
+        tree = ast.parse((k / "kernel.py").read_text())
+        fns = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        for fn in ("make_inputs", "run", "reference", "workload"):
+            assert fn in fns, f"{k.name}/kernel.py 缺 {fn}()"
+        if spec.sweep:
+            assert "configure" in fns, f"{k.name}: 有 [sweep] 但 kernel.py 没有 configure()"
+
+
+def test_toolchains_registered_and_have_env_specs():
+    for name, mod in toolchains.REGISTRY.items():
+        assert hasattr(mod, "setup_script")
+        env = ROOT / "envs" / name
+        assert (env / "requirements.txt").exists(), f"envs/{name}/requirements.txt 缺失"
+        assert (env / "torch-index.txt").exists(), f"envs/{name}/torch-index.txt 缺失"
+        script = mod.setup_script("~/klab", "3.12", "~/klab/repo")
+        assert "uv venv" in script and f"envs/{name}/requirements.txt" in script
+
+
+def test_tk_macro_mapping():
+    from klab.harness.cppext import tk_macro
+
+    assert tk_macro(12, 0) == "KITTENS_SM120"
+    assert tk_macro(9, 0) == "KITTENS_SM90"
+    assert tk_macro(10, 0) == "KITTENS_SM100"
+    assert tk_macro(8, 9) == "KITTENS_SM80"
+
+
+def test_vscode_tasks_list_all_targets():
+    import json
+
+    tasks = json.loads((ROOT / ".vscode" / "tasks.json").read_text())
+    opts = next(i for i in tasks["inputs"] if i["id"] == "target")["options"]
+    cfgs = load_targets(ROOT)
+    for name, c in cfgs.items():
+        if c.kind != "local":
+            assert name in opts, f".vscode/tasks.json 的后端下拉缺 {name}"
