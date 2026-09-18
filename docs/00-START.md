@@ -22,6 +22,14 @@
 6. **不放凭据**:Modal 读 `~/.modal.toml`,SSH 读 `~/.ssh/config`,仓库里没有也不允许有 token。
 7. **不为未验证的平台写代码**:租用机、昇腾都还没上过机,只留设计说明(第八节),不写猜测性的适配器。
 
+## 二点五、在一台新 Mac 上首次上手
+
+1. 装 `uv`;仓库根 `uv sync`;`uv run pytest` 应全绿。
+2. `~/.ssh/config` 里要有 `5090home` 别名(现有配置用 ProxyCommand 在局域网与 FRP 间自动选路,私钥 `~/.ssh/home_5090_local_ed25519`);`ssh 5090home true` 通了再继续。
+3. Modal:`uv run modal setup` 登录一次,生成 `~/.modal.toml`;仓库不存 token。
+4. 每种工具链在每个后端第一次用前 `klab setup --target <后端> --toolchain <名>`;远端根目录 `~/klab/{repo,envs,runs}` 可随时删掉重建。
+5. 本地 Nsight Compute GUI(`/Applications/NVIDIA Nsight Compute.app`)用于打开 `.ncu-rep`,非必需。
+
 ## 三、架构与数据流
 
 ```text
@@ -144,6 +152,10 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 1. `toolchains/ascend.py`:CANN 环境 + triton-ascend(或 Ascend C 的编译方式),`envs/ascend/` 放依赖。
 2. `harness/runner.py`:设备探测从 `torch.cuda` 改成按后端选 `torch_npu`;`ARCH_FEATURES` 加 Ascend 一行(cube / vector 单元);`device_info()` 字段照旧。
 3. profiler 适配:`klab ncu` 对昇腾后端改调 `msprof`,`kreport.py` 加一个从 msprof 输出到体检单字段的映射;体检单模板不变,采不到的字段显示 `-`。
+
+## 八点五、版本策略
+
+`envs/*/requirements.txt` 故意不钉版本:torch 取 PyTorch 官方 cu130 索引的最新版,triton 随 torch,tilelang / nvidia-cutlass-dsl 取 PyPI 最新。`klab setup` 会打印实际装到的版本。某次升级把哪条工具链弄坏了,就在对应 `requirements.txt` 里钉住上一个可用版本并在注释里写日期与原因;Modal 镜像会随 requirements 变化自动重建。2026-09-18 的可用组合:torch 2.14.0+cu130、triton 3.8.0、tilelang 0.1.14、nvidia-cutlass-dsl 4.7.1、ThunderKittens main(2026-09-12)。
 
 ## 九、维护规矩
 
