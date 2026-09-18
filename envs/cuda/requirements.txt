@@ -1,0 +1,4 @@
+# 裸 CUDA C++:kernel.cu 由 torch.utils.cpp_extension 在后端用 nvcc 现场编成扩展,需要 ninja。
+numpy
+ninja
+pybind11

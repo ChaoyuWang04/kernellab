@@ -1,0 +1,4 @@
+# ThunderKittens:header-only,编译方式与 cuda 工具链相同;TK 源码由 setup 克隆到后端(见 toolchains/tk.py)。
+numpy
+ninja
+pybind11

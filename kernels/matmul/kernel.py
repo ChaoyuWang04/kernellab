@@ -11,6 +11,11 @@ BLOCK_M, BLOCK_N, BLOCK_K, GROUP_M = 128, 128, 32, 8
 NUM_STAGES, NUM_WARPS = 4, 8
 
 
+def configure(**p):
+    """klab sweep 用:把一组分块参数写进模块常量(run() 每次都读它们)。"""
+    globals().update({k: int(v) for k, v in p.items()})
+
+
 @triton.jit
 def matmul_kernel(
     a_ptr, b_ptr, c_ptr, M, N, K,

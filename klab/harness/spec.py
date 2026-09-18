@@ -5,6 +5,8 @@ kernel.py 必须提供四个函数(都是普通 Python,与 DSL 无关):
     run(**inputs) -> Tensor                                 调用你的算子
     reference(**inputs) -> Tensor                           torch 参考实现
     workload(case: dict, **inputs) -> {"flops": int, "bytes": int}   用来换算 TFLOPS / GB/s
+可选:
+    configure(**params)   扫参用:把 meta.toml [sweep] 里的一组参数应用到算子(改全局常量、清编译缓存)
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ class KernelSpec:
     atol: float
     rtol: float
     cases: list[dict] = field(default_factory=list)
+    sweep: dict[str, list] = field(default_factory=dict)
 
     @classmethod
     def load(cls, kernel_dir: Path) -> "KernelSpec":
@@ -42,6 +45,7 @@ class KernelSpec:
             atol=float(tol.get("atol", 1e-5)),
             rtol=float(tol.get("rtol", 1e-5)),
             cases=list(meta.get("cases", [])),
+            sweep={k: list(v) for k, v in meta.get("sweep", {}).items()},
         )
 
     def load_module(self) -> ModuleType:

@@ -1,0 +1,25 @@
+name = "tile_add_tk"
+toolchain = "tk"
+kernel_regex = "tile_add_kernel"
+
+# ThunderKittens 工具链的烟测:每个 warp 搬一块 16×64 的 bf16 寄存器 tile,做 C = A + B 再写回。
+# 只用 TK 最基础的 rt 类型与 load / add / store,任何架构都能编;算子本身没有性能意义。
+[requires]
+min_cc = 8.0
+features = []
+
+[tolerance]
+atol = 1e-2
+rtol = 1e-2
+
+[[cases]]
+name = "4096x4096-bf16"
+rows = 4096
+cols = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "16384x4096-bf16"
+rows = 16384
+cols = 4096
+dtype = "bfloat16"

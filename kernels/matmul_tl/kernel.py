@@ -13,6 +13,12 @@ NUM_STAGES, THREADS = 3, 128
 _cache: dict = {}
 
 
+def configure(**p):
+    """klab sweep 用:改分块常量并清掉已编译缓存。"""
+    globals().update({k: int(v) for k, v in p.items()})
+    _cache.clear()
+
+
 def _build(M, N, K, dtype="float16", accum_dtype="float"):
     @tilelang.jit(out_idx=[-1])
     def matmul(M, N, K, block_M, block_N, block_K):

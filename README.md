@@ -25,6 +25,8 @@ uv run klab sh    --target 5090home            # 进后端 shell(已 cd 到远�
 uv run klab exec  "nvidia-smi" --target modal-h100   # 在后端执行一段命令(诊断)
 uv run klab report runs/<某次 ncu 运行>          # 重新渲染体检单
 uv run klab compare matmul matmul_tl            # 跨 DSL / 跨后端的 bench 对比表(读 runs/,不联网)
+uv run klab sweep kernels/matmul --target 5090home --case 4096-f16   # 按 meta.toml [sweep] 扫参,列每个 case 最快的几组
+uv run klab baseline kernels/matmul --target 5090home                # 把最新 bench 钉成基线;之后 bench 自动报与基线的差
 ```
 
 VSCode 里打开 `kernel.py`,`Cmd+Shift+B` 或 `Tasks: Run Task` 选 `klab: check / bench / ncu 当前算子`,任务会弹出后端选择框。想绑快捷键,在用户级 `keybindings.json` 加:
@@ -56,7 +58,18 @@ kernels/<name>/
 
 `meta.toml` 的 `requires.min_cc` 与 `features` 是给后续 `--target auto` 用的:5090 是 sm_120,没有 wgmma / tcgen05 / cluster,Hopper 优先的算子要标出来,到时候自动路由到 Modal 的 H100。
 
-样板:`kernels/vector_add`(最小链路)、`kernels/softmax`(融合行 softmax)、`kernels/matmul`(Triton)与 `kernels/matmul_tl`(TileLang,同一分块尺寸,用来跨 DSL 对照)。
+样板(五种工具链各至少一个):
+
+| 目录 | 工具链 | 说明 |
+|---|---|---|
+| `vector_add`、`softmax` | triton | 最小链路;融合行 softmax |
+| `matmul` | triton | 分块 matmul,声明需要 wgmma(演示门禁),带 `[sweep]` |
+| `matmul_tl` | tilelang | 与上面同尺寸,跨 DSL 对照,带 `[sweep]` |
+| `matmul_cute` | cute | NVIDIA 官方 CuTe DSL 示例原样 vendor 在 `_vendor/`,按卡挑 sm_120 或 Hopper 类 |
+| `sgemm_cuda` | cuda | 经典共享内存分块 SGEMM(fp32、CUDA core),`.cu` 现场 nvcc 编成 torch 扩展 |
+| `tile_add_tk` | tk | ThunderKittens 烟测:寄存器 tile 的 load / add / store |
+
+`cuda` 与 `tk` 算子的 `kernel.py` 通过 `klab.harness.cppext.load_extension()` 编译同目录的 `.cu`,缓存在后端的 `~/.cache/klab/<名>-<架构>`(Modal 用 Volume 持久化)。
 
 ## 测速方法
 
@@ -107,6 +120,12 @@ uv run klab bench kernels/matmul --target 5090home --ignore-requires  # 强行�
 uv run klab bench kernels/matmul --target modal-h100                  # 换后端,原样跑
 ```
 
+## 扫参与基线
+
+`meta.toml` 加 `[sweep]`(参数名 = 候选列表),`kernel.py` 提供 `configure(**params)` 把一组参数应用到算子(改全局常量、清编译缓存)。`klab sweep` 在后端按笛卡尔积逐组 check + bench,编译失败或共享内存超限的组记为失败而不中断,最后按 case 列出最快的几组。5090 的共享内存上限是 101376 字节,`BLOCK_N=256` 配 4 级流水会超。
+
+`klab baseline` 把某次 bench 复制到 `kernels/<名>/baselines/<后端>.json`(进 git)。之后同一后端的 `klab bench` 自动打印「现在 / 基线 / 变化」,±3% 以外标色。
+
 ## 加一个后端
 
 `targets.toml` 加一段。`kind = "ssh"` 的只需要 `host`(`~/.ssh/config` 里的别名)与 `root`,其余走默认。远端要有:能跑 CUDA 的驱动、`curl`、`rsync`;`klab setup` 会自己装 uv 与 venv。
@@ -115,14 +134,22 @@ uv run klab bench kernels/matmul --target modal-h100                  # 换后�
 
 ## 加一种工具链
 
-`klab/toolchains/<name>.py` 给出 `setup_script()`,`envs/<name>/` 放依赖清单,`klab/toolchains/__init__.py` 登记。纯 pip 的(Triton、TileLang 已接,CuTe DSL 同法)共用 `_pip.py`,SSH 后端每种工具链一个 uv venv(`~/klab/envs/<name>`),Modal 每种工具链一个镜像(`klab-<name>` app);需要特定 nvcc 的(ThunderKittens、裸 CUDA)后续用 Docker 镜像。
+`klab/toolchains/<name>.py` 给出 `setup_script()`,`envs/<name>/` 放依赖清单,`klab/toolchains/__init__.py` 登记。五种都共用 `_pip.py` 的装法:SSH 后端每种工具链一个 uv venv(`~/klab/envs/<name>`),Modal 每种工具链一个镜像(`klab-<name>` app)。模块可选属性 `APT` / `MODAL_RUN_COMMANDS` / `MODAL_ENV` 给 Modal 镜像加东西,`local_prepare(root)` 在 Mac 上做准备。
 
-TileLang 的 JIT 用 nvcc,两个后端 PATH 里都有 cuda/bin;它生成的 kernel 叫 `gemm_kernel`,`meta.toml` 的 `kernel_regex` 按此过滤。
+| 工具链 | 环境 | 编译 | 备注 |
+|---|---|---|---|
+| triton | pip | JIT | |
+| tilelang | pip | JIT,调 nvcc | 生成 kernel 名 `gemm_kernel` |
+| cute | pip `nvidia-cutlass-dsl[cu13]` | JIT | sm_120 与 sm_90 各有官方实现 |
+| cuda | pip ninja + pybind11 | `cppext.load_extension()` 现场 nvcc | |
+| tk | 同 cuda + ThunderKittens 源码 | 同上,加 include 与 `KITTENS_SM<xx>` 宏,sm_90 起用 `compute_XXa` | 5090home 连不上 github,TK 源码在 Mac 克隆到 `envs/tk/ThunderKittens`(gitignore)随 rsync 同步;Modal 镜像构建时自己克隆 |
 
 ## 路线
 
 1. ✅ SSH 后端 + Triton + check / bench / ncu,打通 5090home
 2. ✅ Modal 后端(同一份 requirements)+ 架构特性门禁,matmul 在 5090 被拒、在 H100 原样跑
-3. ✅ TileLang 工具链 + `klab compare`;CuTe DSL、ThunderKittens 待接
-4. `--target auto`:按 `requires` 匹配后端
-5. 昇腾:CANN 环境 + msprof 适配
+3. ✅ TileLang、CuTe DSL、裸 CUDA、ThunderKittens 工具链 + `klab compare`
+4. ✅ `klab sweep` 扫参 + `klab baseline` 基线回归
+5. `--target auto`:按 `requires` 匹配后端(用户 2026-09-18 决定先不做,等算子多到手选变烦再加)
+6. 租用机验证:vast / runpod / autodl 三个别名当时都离线,没跑过;租到机器后 `klab setup` 走一遍即可
+7. 昇腾:需要租一台 910B。要改的只有三处:`toolchains/ascend.py`(CANN + triton-ascend 或 Ascend C 的装法)、harness 的设备探测(torch.cuda → torch_npu)与 `ARCH_FEATURES` 加 Ascend 一行、profiler 适配器(ncu → msprof,体检单的字段映射)。Target 层不用动

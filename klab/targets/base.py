@@ -41,7 +41,10 @@ class Target(ABC):
 
     def env_prefix(self) -> str:
         """远端非交互 shell 的 PATH 里没有 ~/.local/bin 与 cuda,统一补上。"""
-        return f'export PATH="$HOME/.local/bin:{self.cfg.cuda_bin}:$PATH"; export PYTHONPATH="{self.repo_dir}"; '
+        return (
+            f'export PATH="$HOME/.local/bin:{self.cfg.cuda_bin}:$PATH"; export PYTHONPATH="{self.repo_dir}"; '
+            f'export KLAB_ROOT="{self.root}"; export KLAB_TK_ROOT="${{KLAB_TK_ROOT:-{self.repo_dir}/envs/tk/ThunderKittens}}"; '
+        )
 
     # ---- 抽象动作 ----
     @abstractmethod

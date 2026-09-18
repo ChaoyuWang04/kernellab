@@ -151,10 +151,43 @@ def do_ncu(spec: KernelSpec, mod, cases: list[dict], launches: int) -> list[dict
     return results
 
 
+def do_sweep(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, flush: bool) -> list[dict]:
+    """扫参:meta.toml 的 [sweep] 给参数候选,kernel.py 的 configure(**params) 应用一组;每组先 check 再 bench。"""
+    import itertools
+    import traceback
+
+    grid = spec.sweep
+    if not grid:
+        raise SystemExit("meta.toml 没有 [sweep] 段(参数名 = [候选列表])")
+    if not hasattr(mod, "configure"):
+        raise SystemExit("kernel.py 缺少 configure(**params),扫参需要它把一组参数应用到算子上")
+    names = list(grid)
+    combos = [dict(zip(names, vals)) for vals in itertools.product(*(grid[n] for n in names))]
+    print(f"[sweep] {len(combos)} 组参数 × {len(cases)} 个 case", flush=True)
+    results = []
+    for i, cfg in enumerate(combos):
+        tag = ",".join(f"{k}={v}" for k, v in cfg.items())
+        try:
+            mod.configure(**cfg)
+            chk = do_check(spec, mod, cases[:1])
+            if not chk[0]["ok"]:
+                results.append({"config": cfg, "error": f"check 未通过 max_abs_err={chk[0]['max_abs_err']:.3e}"})
+                print(f"[sweep] {i + 1}/{len(combos)} {tag}: 结果错误", flush=True)
+                continue
+            for r in do_bench(spec, mod, cases, warmup, iters, flush):
+                results.append({"config": cfg, **r})
+        except Exception as e:  # 编译失败、共享内存超限、寄存器溢出……都算这组不可用
+            msg = str(e).strip().splitlines()[-1][:200] if str(e).strip() else type(e).__name__
+            results.append({"config": cfg, "error": msg})
+            print(f"[sweep] {i + 1}/{len(combos)} {tag}: 失败 {msg}", flush=True)
+            torch.cuda.synchronize()
+    return results
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", required=True)
-    ap.add_argument("--mode", choices=["check", "bench", "ncu"], required=True)
+    ap.add_argument("--mode", choices=["check", "bench", "ncu", "sweep"], required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--case", action="append", default=None)
     ap.add_argument("--warmup", type=int, default=10)
@@ -176,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
         results = do_check(spec, mod, cases)
     elif args.mode == "bench":
         results = do_bench(spec, mod, cases, args.warmup, args.iters, not args.no_flush)
+    elif args.mode == "sweep":
+        results = do_sweep(spec, mod, cases, args.warmup, args.iters, not args.no_flush)
     else:
         results = do_ncu(spec, mod, cases, args.launches)
 

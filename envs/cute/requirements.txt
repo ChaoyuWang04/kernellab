@@ -1,0 +1,3 @@
+# CuTe DSL(CUTLASS 4 的 Python 层)。torch 从 cu130 索引装(setup 单独处理)。
+numpy
+nvidia-cutlass-dsl[cu13]

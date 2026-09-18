@@ -26,3 +26,11 @@ m = 8192
 n = 8192
 k = 8192
 dtype = "float16"
+
+# klab sweep 的候选;5090 共享内存约 99 KB,BLOCK_N=256 且 4 级流水的组合会超限,扫参会把它记成失败
+[sweep]
+BLOCK_M = [64, 128]
+BLOCK_N = [64, 128, 256]
+BLOCK_K = [32, 64]
+NUM_STAGES = [3, 4]
+NUM_WARPS = [4, 8]

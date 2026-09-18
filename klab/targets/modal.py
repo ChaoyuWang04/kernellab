@@ -59,18 +59,27 @@ class ModalTarget(Target):
         root = self._local_root or Path.cwd()
         env_dir = root / "envs" / toolchain
         torch_index = (env_dir / "torch-index.txt").read_text().strip().splitlines()[0]
+        from klab import toolchains
+
+        tc = toolchains.get(toolchain)
         image = (
             modal.Image.from_registry(BASE_IMAGE, add_python=PYTHON)
-            .apt_install("git")
+            .apt_install("git", *getattr(tc, "APT", []))
             .pip_install("torch", index_url=torch_index)
             .pip_install_from_requirements(str(env_dir / "requirements.txt"))
-            .env({"PYTHONPATH": self.repo_dir})
+        )
+        for cmd in getattr(tc, "MODAL_RUN_COMMANDS", []):
+            image = image.run_commands(cmd)
+        image = (
+            image.env({"PYTHONPATH": self.repo_dir, "KLAB_ROOT": self.root, **getattr(tc, "MODAL_ENV", {})})
             .add_local_dir(root, remote_path=self.repo_dir, ignore=[*SYNC_EXCLUDES, "**/__pycache__"])
         )
         app = modal.App(f"klab-{toolchain}")
         runs_dir = self.runs_dir
+        # 编译缓存(cpp_extension、tilelang、triton)跨调用持久化,否则每次冷启动都重编
+        cache = modal.Volume.from_name("klab-cache", create_if_missing=True)
 
-        @app.function(image=image, gpu=self.gpu, timeout=3600, serialized=True)
+        @app.function(image=image, gpu=self.gpu, timeout=3600, serialized=True, volumes={"/root/.cache": cache})
         def run_script(script: str) -> tuple[int, bytes]:
             import io as _io
             import os as _os
