@@ -9,4 +9,7 @@ def make_target(cfg: TargetConfig) -> Target:
     if cfg.kind == "local":
         from klab.targets.local import LocalTarget
         return LocalTarget(cfg)
+    if cfg.kind == "modal":
+        from klab.targets.modal import ModalTarget
+        return ModalTarget(cfg)
     raise SystemExit(f"未实现的后端类型 {cfg.kind!r}(target {cfg.name})")

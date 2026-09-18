@@ -23,7 +23,9 @@ class TargetConfig:
     host: str = ""
     python: str = "3.12"
     cuda_bin: str = "/usr/local/cuda/bin"
+    gpu: str = ""
     peaks: dict[str, float] = field(default_factory=dict)
+    extra: dict = field(default_factory=dict)  # 后端私有选项,原样透传
 
     @classmethod
     def from_dict(cls, name: str, d: dict) -> "TargetConfig":
@@ -35,7 +37,9 @@ class TargetConfig:
             host=d.get("host", ""),
             python=str(d.get("python", "3.12")),
             cuda_bin=d.get("cuda_bin", "/usr/local/cuda/bin"),
+            gpu=str(d.get("gpu", "")),
             peaks=peaks,
+            extra={k: v for k, v in d.items() if k not in {"kind", "root", "host", "python", "cuda_bin", "gpu"} and not k.startswith("peak_")},
         )
 
 

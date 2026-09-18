@@ -1,0 +1,28 @@
+name = "matmul"
+toolchain = "triton"
+kernel_regex = "matmul_kernel"
+
+# 用来验证后端插拔:声明需要 wgmma(Hopper 的异步 warpgroup MMA)。
+# 5090(sm_120)没有 wgmma,harness 会拒绝并提示换 target;H100 上 Triton 把 tl.dot 直接降到 wgmma。
+# 想在 5090 上用 mma.sync 跑同一份代码做对照:加 --ignore-requires。
+[requires]
+min_cc = 9.0
+features = ["wgmma"]
+
+[tolerance]
+atol = 1e-1
+rtol = 1e-2
+
+[[cases]]
+name = "4096-f16"
+m = 4096
+n = 4096
+k = 4096
+dtype = "float16"
+
+[[cases]]
+name = "8192-f16"
+m = 8192
+n = 8192
+k = 8192
+dtype = "float16"

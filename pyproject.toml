@@ -3,7 +3,11 @@ name = "klab"
 version = "0.1.0"
 description = "Mac 上写算子,远端 GPU 上编译、跑、测速、NCU;后端可插拔"
 requires-python = ">=3.11"
-dependencies = ["typer>=0.12", "rich>=13"]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "modal>=1.5.5",
+]
 
 [project.scripts]
 klab = "klab.cli:app"

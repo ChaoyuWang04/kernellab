@@ -8,6 +8,7 @@
     klab ncu    <kernel_dir> --target T [--full] NCU 剖析,报告拉回 runs/
     klab open   <run_dir | .ncu-rep>   用本地 Nsight Compute 打开
     klab sh     --target T             进后端 shell
+    klab exec   "<shell>" --target T   在后端执行一段命令(诊断)
 """
 from __future__ import annotations
 
@@ -78,8 +79,8 @@ def _remote_run(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, mode: st
     local = root / "runs"
     tgt.fetch(remote_run, local)
     out = local / rid
-    if proc.returncode not in (0, 1) or not (out / "result.json").exists():
-        raise SystemExit(f"远端执行失败(exit {proc.returncode}),结果目录 {out}")
+    if not (out / "result.json").exists():
+        raise SystemExit(f"后端 {cfg.name} 没有产出结果(exit {proc.returncode}):看上面的输出")
     # 把 case 元数据并进结果,供报表查 dtype
     data = json.loads((out / "result.json").read_text())
     data["cases"] = spec.cases
@@ -117,10 +118,16 @@ def probe(target: str = TargetOpt, toolchain: str = typer.Option("triton")):
 
 
 @app.command()
-def check(kernel: Path, target: str = TargetOpt, case: Optional[list[str]] = typer.Option(None, "--case", "-c")):
+def check(
+    kernel: Path,
+    target: str = TargetOpt,
+    case: Optional[list[str]] = typer.Option(None, "--case", "-c"),
+    ignore_requires: bool = typer.Option(False, "--ignore-requires", help="架构要求不满足也强行跑"),
+):
     """正确性:与 kernel.py 的 reference() 逐 case 比对。"""
     root, cfg, tgt = _resolve(target)
-    out = _remote_run(root, cfg, tgt, _kernel_dir(root, kernel), "check", case or [], [])
+    extra = ["--ignore-requires"] if ignore_requires else []
+    out = _remote_run(root, cfg, tgt, _kernel_dir(root, kernel), "check", case or [], extra)
     ok = print_result(out / "result.json", cfg)
     raise typer.Exit(0 if ok else 1)
 
@@ -134,15 +141,17 @@ def bench(
     warmup: int = typer.Option(10),
     no_flush: bool = typer.Option(False, "--no-flush", help="测速前不刷 L2"),
     skip_check: bool = typer.Option(False, "--skip-check", help="不先跑正确性"),
+    ignore_requires: bool = typer.Option(False, "--ignore-requires", help="架构要求不满足也强行跑"),
 ):
     """测速:预热 → 每次迭代前刷 L2 → CUDA event 计时 → 中位数/分位数 → GB/s 与 TFLOPS。"""
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
+    ign = ["--ignore-requires"] if ignore_requires else []
     if not skip_check:
-        out = _remote_run(root, cfg, tgt, kdir, "check", case or [], [])
+        out = _remote_run(root, cfg, tgt, kdir, "check", case or [], ign)
         if not print_result(out / "result.json", cfg):
             raise SystemExit("正确性未通过,不测速(--skip-check 可跳过)")
-    extra = [f"--iters {iters}", f"--warmup {warmup}"] + (["--no-flush"] if no_flush else [])
+    extra = [f"--iters {iters}", f"--warmup {warmup}"] + (["--no-flush"] if no_flush else []) + ign
     out = _remote_run(root, cfg, tgt, kdir, "bench", case or [], extra)
     print_result(out / "result.json", cfg)
     console.print(f"[dim]结果 {out}[/]")
@@ -165,7 +174,9 @@ def ncu(
     kdir = _kernel_dir(root, kernel)
     spec = KernelSpec.load(kdir)
     kfilter = f"-k regex:{spec.kernel_regex} " if spec.kernel_regex else ""
-    sections = "--set full" if full else NCU_BASIC
+    # 容器里通常锁不了 GPU 时钟(Modal 就是),targets.toml 用 ncu_clock_control = "none" 关掉;有权限的机器保持默认 base 以稳定数字
+    clock = f"--clock-control {cfg.extra.get('ncu_clock_control', 'base')} "
+    sections = ("--set full" if full else NCU_BASIC) + " " + clock.strip()
 
     def run_with_ncu() -> Path:
         rid = _run_id(spec.name, cfg.name, "ncu")
@@ -203,6 +214,15 @@ def open_cmd(path: Path):
     if not rep.exists():
         raise SystemExit(f"找不到 {rep}")
     _open_ncu(rep)
+
+
+@app.command(name="exec")
+def exec_cmd(script: str, target: str = TargetOpt):
+    """在后端的 repo 目录里执行一段 shell(诊断用)。"""
+    root, _, tgt = _resolve(target)
+    tgt.sync(root)
+    proc = tgt.run(script, check=False)
+    raise typer.Exit(proc.returncode)
 
 
 @app.command()

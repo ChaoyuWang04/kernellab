@@ -39,11 +39,33 @@ def device_info() -> dict:
     return info
 
 
-def check_requirements(spec: KernelSpec) -> None:
+# 各代架构提供的硬件特性,是 meta.toml 里 requires.features 的匹配表。
+# 注意 cc 数字不是超集关系:sm_120(5090)数字最大,却没有 Hopper 的 wgmma,也没有数据中心 Blackwell 的 tcgen05。
+ARCH_FEATURES = {
+    8: {"mma_sync", "async_copy"},                                                   # Ampere / Ada
+    9: {"mma_sync", "async_copy", "wgmma", "tma", "cluster", "dsmem"},               # Hopper
+    10: {"mma_sync", "async_copy", "tma", "cluster", "dsmem", "tcgen05", "tmem"},    # 数据中心 Blackwell(B200)
+    12: {"mma_sync", "async_copy", "block_scaled_mma"},                              # 消费级 Blackwell(5090);TMA 支持待实测
+}
+
+
+def check_requirements(spec: KernelSpec, ignore: bool = False) -> None:
     major, minor = torch.cuda.get_device_capability(0)
     cc = major + minor / 10
+    have = ARCH_FEATURES.get(major, set())
+    missing = [f for f in spec.features if f not in have]
+    problems = []
     if cc < spec.min_cc:
-        raise SystemExit(f"该算子要求 cc >= {spec.min_cc},当前设备 cc {cc}:换一个 --target")
+        problems.append(f"要求 cc >= {spec.min_cc},当前 cc {cc}")
+    if missing:
+        problems.append(f"要求特性 {spec.features},当前架构 sm_{major}{minor} 缺 {missing}")
+    if not problems:
+        return
+    msg = f"[requires] {torch.cuda.get_device_name(0)} 不满足算子 {spec.name} 的要求:" + ";".join(problems)
+    if ignore:
+        print(msg + "(--ignore-requires,继续)", flush=True)
+        return
+    raise SystemExit(msg + "。换一个 --target,或加 --ignore-requires 强行跑")
 
 
 def compare(out: torch.Tensor, ref: torch.Tensor, atol: float, rtol: float) -> dict:
@@ -139,12 +161,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--iters", type=int, default=100)
     ap.add_argument("--no-flush", action="store_true", help="测速时不刷 L2")
     ap.add_argument("--launches", type=int, default=3, help="ncu 模式下每个 case 启动次数")
+    ap.add_argument("--ignore-requires", action="store_true", help="架构要求不满足也继续")
     args = ap.parse_args(argv)
 
     if not torch.cuda.is_available():
         raise SystemExit("torch.cuda 不可用:检查驱动或 venv 里的 torch 是否为 CUDA 版")
     spec = KernelSpec.load(Path(args.kernel))
-    check_requirements(spec)
+    check_requirements(spec, args.ignore_requires)
     mod = spec.load_module()
     cases = spec.select_cases(args.case)
 

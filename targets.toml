@@ -1,7 +1,7 @@
 # 执行后端登记表。klab 的每条命令都用 --target <名字> 显式选一个。
 # kind = ssh   : 任何能 ssh 上去的机器(home lab、vast、runpod、autodl……)
 # kind = local : 在当前机器上直接跑(用于在盒子上调试 harness 本身)
-# kind = modal : 预留,下一阶段接入
+# kind = modal : Modal 云 GPU,gpu 字段选卡型(H100 / H200 / B200 / A100-80GB / L40S),凭据读 ~/.modal.toml
 
 [targets.5090home]
 kind = "ssh"
@@ -19,3 +19,13 @@ kind = "local"
 root = "~/klab"
 python = "3.12"
 cuda_bin = "/usr/local/cuda/bin"
+
+[targets.modal-h100]
+kind = "modal"
+gpu = "H100"
+root = "/root/klab"
+api_proxy = "http://127.0.0.1:3213"   # 直连 api.modal.com 不通时才用
+ncu_clock_control = "none"           # 容器里锁不了时钟;数字会比锁频时抖
+peak_gbps = 3350             # H100 SXM HBM3 公开规格
+peak_tflops_fp16 = 770       # klab probe 2026-09-18 实测 8192³ fp16 matmul 770 TFLOPS(公开规格 989 dense)
+peak_tflops_fp32 = 67
