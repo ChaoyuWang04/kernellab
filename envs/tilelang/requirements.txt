@@ -1,0 +1,4 @@
+# TileLang 工具链。torch 从 PyTorch 官方 cu130 索引装(setup 单独处理)。
+# tilelang 的 JIT 用 nvcc:5090home 用主机 /usr/local/cuda,Modal 镜像用 nvidia/cuda devel 自带的。
+numpy
+tilelang

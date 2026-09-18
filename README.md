@@ -24,6 +24,7 @@ uv run klab ncu   kernels/softmax --target 5090home --case 8192x8192-f16 --open 
 uv run klab sh    --target 5090home            # 进后端 shell(已 cd 到远端 repo)
 uv run klab exec  "nvidia-smi" --target modal-h100   # 在后端执行一段命令(诊断)
 uv run klab report runs/<某次 ncu 运行>          # 重新渲染体检单
+uv run klab compare matmul matmul_tl            # 跨 DSL / 跨后端的 bench 对比表(读 runs/,不联网)
 ```
 
 VSCode 里打开 `kernel.py`,`Cmd+Shift+B` 或 `Tasks: Run Task` 选 `klab: check / bench / ncu 当前算子`,任务会弹出后端选择框。想绑快捷键,在用户级 `keybindings.json` 加:
@@ -55,7 +56,7 @@ kernels/<name>/
 
 `meta.toml` 的 `requires.min_cc` 与 `features` 是给后续 `--target auto` 用的:5090 是 sm_120,没有 wgmma / tcgen05 / cluster,Hopper 优先的算子要标出来,到时候自动路由到 Modal 的 H100。
 
-样板:`kernels/vector_add`(最小链路)、`kernels/softmax`(融合行 softmax)。
+样板:`kernels/vector_add`(最小链路)、`kernels/softmax`(融合行 softmax)、`kernels/matmul`(Triton)与 `kernels/matmul_tl`(TileLang,同一分块尺寸,用来跨 DSL 对照)。
 
 ## 测速方法
 
@@ -114,12 +115,14 @@ uv run klab bench kernels/matmul --target modal-h100                  # 换后�
 
 ## 加一种工具链
 
-`klab/toolchains/<name>.py` 给出 `setup_script()`,`envs/<name>/` 放依赖清单,`klab/toolchains/__init__.py` 登记。纯 pip 的(Triton、TileLang、CuTe DSL)照 triton 那样写;需要特定 nvcc 的(ThunderKittens、裸 CUDA)后续用 Docker 镜像。
+`klab/toolchains/<name>.py` 给出 `setup_script()`,`envs/<name>/` 放依赖清单,`klab/toolchains/__init__.py` 登记。纯 pip 的(Triton、TileLang 已接,CuTe DSL 同法)共用 `_pip.py`,SSH 后端每种工具链一个 uv venv(`~/klab/envs/<name>`),Modal 每种工具链一个镜像(`klab-<name>` app);需要特定 nvcc 的(ThunderKittens、裸 CUDA)后续用 Docker 镜像。
+
+TileLang 的 JIT 用 nvcc,两个后端 PATH 里都有 cuda/bin;它生成的 kernel 叫 `gemm_kernel`,`meta.toml` 的 `kernel_regex` 按此过滤。
 
 ## 路线
 
 1. ✅ SSH 后端 + Triton + check / bench / ncu,打通 5090home
 2. ✅ Modal 后端(同一份 requirements)+ 架构特性门禁,matmul 在 5090 被拒、在 H100 原样跑
-3. TileLang、CuTe DSL、ThunderKittens 三套工具链
+3. ✅ TileLang 工具链 + `klab compare`;CuTe DSL、ThunderKittens 待接
 4. `--target auto`:按 `requires` 匹配后端
 5. 昇腾:CANN 环境 + msprof 适配

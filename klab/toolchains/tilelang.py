@@ -1,7 +1,7 @@
-"""Triton 工具链:纯 pip,JIT 编译,无独立 build 步骤。"""
+"""TileLang 工具链:纯 pip,JIT 时调 nvcc(后端 PATH 里已有 cuda/bin)。"""
 from klab.toolchains._pip import setup_script as _pip_setup
 
-NAME = "triton"
+NAME = "tilelang"
 
 
 def setup_script(root: str, python: str, repo_dir: str) -> str:

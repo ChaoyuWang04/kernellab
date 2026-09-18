@@ -8,12 +8,14 @@
     klab ncu    <kernel_dir> --target T [--full] NCU 剖析,报告拉回 runs/
     klab open   <run_dir | .ncu-rep>   用本地 Nsight Compute 打开
     klab report <run_dir>              重新渲染体检单
+    klab compare [算子...] [-t 后端]     跨算子 / 跨后端的 bench 对比表
     klab sh     --target T             进后端 shell
     klab exec   "<shell>" --target T   在后端执行一段命令(诊断)
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -73,6 +75,7 @@ def _remote_run(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, mode: st
         f"mkdir -p {remote_run} && {ncu_prefix}{py} -m klab.harness.runner --kernel {rel} --mode {mode} "
         f"--out {remote_run}/result.json {case_args} {' '.join(extra)}"
     )
+    os.environ["KLAB_TOOLCHAIN"] = spec.toolchain  # Modal 按它选镜像;SSH 后端靠 env_python(toolchain)
     console.print(f"[dim]→ {cfg.name}: sync[/]")
     tgt.sync(root)
     console.print(f"[dim]→ {cfg.name}: {mode} {rel}[/]")
@@ -102,7 +105,13 @@ def setup(target: str = TargetOpt, toolchain: str = typer.Option("triton", help=
     """在后端装该工具链的环境(幂等,可重复跑)。"""
     root, cfg, tgt = _resolve(target)
     tc = toolchains.get(toolchain)
+    os.environ["KLAB_TOOLCHAIN"] = toolchain
     tgt.sync(root)
+    if cfg.kind == "modal":
+        # Modal 的环境就是镜像,第一次调用时构建;这里只触发构建并打印版本
+        tgt.run("python -c \"import torch,importlib; print('[setup] torch', torch.__version__, torch.cuda.get_device_name(0)); "
+                "[print('[setup]', m, importlib.import_module(m).__version__) for m in ('triton','tilelang') if importlib.util.find_spec(m)]\"")
+        return
     tgt.run(tc.setup_script(tgt.root, cfg.python, tgt.repo_dir))
 
 
@@ -110,6 +119,7 @@ def setup(target: str = TargetOpt, toolchain: str = typer.Option("triton", help=
 def probe(target: str = TargetOpt, toolchain: str = typer.Option("triton")):
     """探测后端:设备属性、实测拷贝带宽与 fp16 matmul 吞吐,结果存 runs/。"""
     root, cfg, tgt = _resolve(target)
+    os.environ["KLAB_TOOLCHAIN"] = toolchain
     rid = _run_id("probe", cfg.name, "probe")
     remote_run = f"{tgt.runs_dir}/{rid}"
     tgt.sync(root)
@@ -174,7 +184,9 @@ def ncu(
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
     spec = KernelSpec.load(kdir)
-    kfilter = f"-k regex:{spec.kernel_regex} " if spec.kernel_regex else ""
+    import shlex
+
+    kfilter = f"-k {shlex.quote('regex:' + spec.kernel_regex)} " if spec.kernel_regex else ""  # 正则里可能有 |
     # 容器里通常锁不了 GPU 时钟(Modal 就是),targets.toml 用 ncu_clock_control = "none" 关掉;有权限的机器保持默认 base 以稳定数字
     clock = f"--clock-control {cfg.extra.get('ncu_clock_control', 'base')} "
     sections = ("--set full" if full else NCU_BASIC) + " " + clock.strip()
@@ -191,6 +203,7 @@ def ncu(
             f"&& ncu --import {remote_run}/ncu.ncu-rep --page details > {remote_run}/ncu-details.txt "
             f"&& ncu --import {remote_run}/ncu.ncu-rep --page raw --csv > {remote_run}/ncu-raw.csv"
         )
+        os.environ["KLAB_TOOLCHAIN"] = spec.toolchain
         console.print(f"[dim]→ {cfg.name}: sync[/]")
         tgt.sync(root)
         console.print(f"[dim]→ {cfg.name}: ncu {rel}[/]")
@@ -247,6 +260,19 @@ def open_cmd(path: Path):
     if not rep.exists():
         raise SystemExit(f"找不到 {rep}")
     _open_ncu(rep)
+
+
+@app.command()
+def compare(
+    kernel: Optional[list[str]] = typer.Argument(None, help="算子名,可多个;不给则全部"),
+    target: Optional[list[str]] = typer.Option(None, "--target", "-t", help="只看这些后端"),
+    all_runs: bool = typer.Option(False, "--all", help="不只取每个 (算子, 后端) 最新一次"),
+):
+    """跨算子、跨后端的 bench 对比表(读 runs/ 里的结果,不联网)。"""
+    from klab.compare import collect, print_table
+
+    root = repo_root()
+    print_table(collect(root, kernel or None, target or None, not all_runs), load_targets(root))
 
 
 @app.command(name="exec")

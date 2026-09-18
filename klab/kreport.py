@@ -143,6 +143,9 @@ def verdict(row: dict) -> str:
             parts.append(f"**计算侧受限**(SM {sm:.0f}%{t})")
     elif hi < 60:
         parts.append(f"**延迟受限**:计算 {sm:.0f}% 与内存 {mem:.0f}% 都没跑满,先看占用率与 stall 原因")
+    elif abs(sm - mem) >= 15:
+        side = "计算" if sm > mem else "内存"
+        parts.append(f"**偏{side}侧、尚未撞墙**(计算 {sm:.0f}%、内存 {mem:.0f}%,都没到 80%):先看占用率与 stall 原因")
     else:
         parts.append(f"**接近均衡**:计算 {sm:.0f}%、内存 {mem:.0f}%,再往上要同时动两边")
     if occ is not None:
@@ -234,7 +237,7 @@ def render(run_dir: Path, cfg: TargetConfig, bench: dict | None = None) -> str:
             "warp 数": _num(row, "launch__occupancy_limit_warps"),
             "block 数": _num(row, "launch__occupancy_limit_blocks"),
         }
-        valid = {k: v for k, v in limits.items() if v is not None}
+        valid = {k: v for k, v in limits.items() if v}  # 0 是 ncu 对超出默认 carveout 的动态共享内存的占位值,不当限制因子
         limiter = min(valid, key=valid.get) if valid else "-"
         md.append("### 发射与占用")
         md.append("")
