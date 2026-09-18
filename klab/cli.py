@@ -7,6 +7,7 @@
     klab bench  <kernel_dir> --target T          测速
     klab ncu    <kernel_dir> --target T [--full] NCU 剖析,报告拉回 runs/
     klab open   <run_dir | .ncu-rep>   用本地 Nsight Compute 打开
+    klab report <run_dir>              重新渲染体检单
     klab sh     --target T             进后端 shell
     klab exec   "<shell>" --target T   在后端执行一段命令(诊断)
 """
@@ -157,7 +158,7 @@ def bench(
     console.print(f"[dim]结果 {out}[/]")
 
 
-NCU_BASIC = "--section SpeedOfLight --section MemoryWorkloadAnalysis --section Occupancy --section LaunchStats --section ComputeWorkloadAnalysis"
+NCU_BASIC = "--section SpeedOfLight --section MemoryWorkloadAnalysis --section Occupancy --section LaunchStats --section ComputeWorkloadAnalysis --section SchedulerStats --section WarpStateStats"
 
 
 @app.command()
@@ -195,12 +196,44 @@ def ncu(
         console.print(f"[dim]→ {cfg.name}: ncu {rel}[/]")
         tgt.run(cmd)
         tgt.fetch(remote_run, root / "runs")
-        return root / "runs" / rid
+        out = root / "runs" / rid
+        data = json.loads((out / "result.json").read_text())
+        data["cases"] = spec.cases  # 体检单要按 case 的 dtype 选峰值
+        (out / "result.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return out
 
     out = run_with_ncu()
-    console.print(f"报告:{out / 'ncu.ncu-rep'}\n文本:{out / 'ncu-details.txt'}")
+    _print_report(root, cfg, out)
+    console.print(f"[dim]NCU 报告 {out / 'ncu.ncu-rep'} · 文本 {out / 'ncu-details.txt'} · 体检单 {out / 'report.md'}[/]")
     if open_gui:
         _open_ncu(out / "ncu.ncu-rep")
+
+
+def _print_report(root: Path, cfg: TargetConfig, run_dir: Path) -> None:
+    from rich.markdown import Markdown
+
+    from klab.kreport import find_latest_bench, render
+
+    data = json.loads((run_dir / "result.json").read_text())
+    bench = find_latest_bench(root, data["kernel"], cfg.name)
+    md = render(run_dir, cfg, bench)
+    (run_dir / "report.md").write_text(md)
+    console.print(Markdown(md))
+
+
+@app.command()
+def report(run_dir: Path, target: Optional[str] = typer.Option(None, "--target", "-t", help="默认从目录名推断")):
+    """重新渲染某次 ncu 运行的体检单(runs/<id>/report.md)。"""
+    root = repo_root()
+    run_dir = run_dir.resolve()
+    if not (run_dir / "result.json").exists():
+        raise SystemExit(f"{run_dir} 不是一次 ncu 运行(缺 result.json)")
+    cfgs = load_targets(root)
+    if target is None:
+        target = next((n for n in cfgs if f"-{n}-" in run_dir.name), None)
+        if target is None:
+            raise SystemExit("无法从目录名推断 target,请用 --target 指定")
+    _print_report(root, cfgs[target], run_dir)
 
 
 def _open_ncu(rep: Path) -> None:
