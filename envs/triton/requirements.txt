@@ -1,0 +1,2 @@
+# Triton 工具链。torch 从 PyTorch 官方 cu130 索引装(setup 单独处理),这里只列其余依赖。
+numpy

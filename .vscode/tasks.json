@@ -1,0 +1,46 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "target",
+      "type": "pickString",
+      "description": "执行后端",
+      "options": ["5090home"],
+      "default": "5090home"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "klab: check 当前算子",
+      "type": "shell",
+      "command": "uv run klab check \"${fileDirname}\" --target ${input:target}",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "klab: bench 当前算子",
+      "type": "shell",
+      "command": "uv run klab bench \"${fileDirname}\" --target ${input:target}",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "klab: ncu 当前算子",
+      "type": "shell",
+      "command": "uv run klab ncu \"${fileDirname}\" --target ${input:target} --open",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "klab: probe 后端",
+      "type": "shell",
+      "command": "uv run klab probe --target ${input:target}",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

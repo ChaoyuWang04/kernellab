@@ -1,0 +1,21 @@
+# 执行后端登记表。klab 的每条命令都用 --target <名字> 显式选一个。
+# kind = ssh   : 任何能 ssh 上去的机器(home lab、vast、runpod、autodl……)
+# kind = local : 在当前机器上直接跑(用于在盒子上调试 harness 本身)
+# kind = modal : 预留,下一阶段接入
+
+[targets.5090home]
+kind = "ssh"
+host = "5090home"            # ~/.ssh/config 里的 Host 别名
+root = "~/klab"              # 远端根目录:repo/ envs/ runs/
+python = "3.12"              # 远端 venv 用的解释器版本
+cuda_bin = "/usr/local/cuda/bin"
+# 公开规格峰值,只用来算 roofline 百分比;`klab probe` 会实测拷贝带宽与 matmul 吞吐
+peak_gbps = 1792             # 512-bit GDDR7 @ 28 Gbps
+peak_tflops_fp16 = 230       # klab probe 2026-09-18 实测 8192³ fp16 matmul 229.8 TFLOPS,取整作为可达峰值
+peak_tflops_fp32 = 104.8
+
+[targets.local]
+kind = "local"
+root = "~/klab"
+python = "3.12"
+cuda_bin = "/usr/local/cuda/bin"
