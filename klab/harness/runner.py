@@ -172,6 +172,23 @@ def do_ncu(spec: KernelSpec, mod, cases: list[dict], launches: int) -> list[dict
     return results
 
 
+def do_ptx(spec: KernelSpec, mod, cases: list[dict], out_dir: Path) -> list[dict]:
+    """先跑一次把 JIT 编译触发掉,再从编译缓存取 PTX,按世代统计指令条数。只用第一个 case:
+    形状是运行期参数,PTX 只随 constexpr(tile 常量)变,多跑几个 case 拿到的是同一份。"""
+    from klab.harness import ptxdump
+
+    case = cases[0]
+    inputs = mod.make_inputs(case, "cuda")
+    mod.run(**inputs)
+    torch.cuda.synchronize()
+    records = ptxdump.dump(spec.toolchain, out_dir)
+    for r in records:
+        hit = ", ".join(f"{k}×{v}" for k, v in sorted(r["counts"].items())) or "(无)"
+        print(f"[ptx] {r['kernel']:<16} {r['ptx_lines']:>5} 行  世代 {r['generations'] or ['—']}  {hit}", flush=True)
+        r["case"] = case["name"]
+    return records
+
+
 def do_sweep(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, flush: bool) -> list[dict]:
     """扫参:meta.toml 的 [sweep] 给参数候选,kernel.py 的 configure(**params) 应用一组;每组先 check 再 bench。"""
     import itertools
@@ -208,7 +225,7 @@ def do_sweep(spec: KernelSpec, mod, cases: list[dict], warmup: int, iters: int, 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", required=True, help="specs/<名> 目录(相对仓库根)")
-    ap.add_argument("--mode", choices=["check", "bench", "ncu", "sweep"], required=True)
+    ap.add_argument("--mode", choices=["check", "bench", "ncu", "sweep", "ptx"], required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--case", action="append", default=None)
     ap.add_argument("--warmup", type=int, default=10)
@@ -232,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
         results = do_bench(spec, mod, cases, args.warmup, args.iters, not args.no_flush)
     elif args.mode == "sweep":
         results = do_sweep(spec, mod, cases, args.warmup, args.iters, not args.no_flush)
+    elif args.mode == "ptx":
+        results = do_ptx(spec, mod, cases, Path(args.out).parent)
     else:
         results = do_ncu(spec, mod, cases, args.launches)
 

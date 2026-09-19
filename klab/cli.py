@@ -7,6 +7,7 @@
     klab check  <kernel_dir> --target T          正确性
     klab bench  <kernel_dir> --target T          测速
     klab ncu    <kernel_dir> --target T [--full] NCU 剖析,报告拉回 runs/
+    klab ptx    <算子> --target T        dump PTX,按世代统计 mma.sync / wgmma / cp.async / tcgen05 等指令
     klab open   <run_dir | .ncu-rep>   用本地 Nsight Compute 打开
     klab report <run_dir>              重新渲染体检单
     klab compare [算子...] [-t 后端]     跨算子 / 跨后端的 bench 对比表
@@ -247,6 +248,47 @@ def sweep(
         for r in failed[:10]:
             console.print(f"  [dim]{','.join(f'{k}={v}' for k, v in r['config'].items())}: {r['error']}[/]")
     console.print(f"[dim]结果 {out}[/]")
+
+
+@app.command()
+def ptx(
+    kernel: Path,
+    target: Optional[str] = TargetOpt,
+    case: Optional[list[str]] = typer.Option(None, "--case", "-c", help="不给则用第一个 case;PTX 只随 tile 常量变,换 case 拿到的是同一份"),
+    ignore_requires: bool = typer.Option(False, "--ignore-requires"),
+):
+    """dump PTX 并按世代统计指令:确认这份 kernel 到底降到了哪一代的 tensor core 与异步拷贝指令。
+
+    体检单只说 Tensor pipe 用了多少,不说走的是 mma.sync 还是 wgmma;练「某一代的特性」时用这个查。
+    """
+    root, cfg, tgt = _resolve(target)
+    kdir = _kernel_dir(root, kernel)
+    spec = KernelSpec.load(kdir)
+    extra = ["--ignore-requires"] if ignore_requires else []
+    out = _remote_run(root, cfg, tgt, kdir, "ptx", case or [spec.cases[0]["name"]], extra)
+    _print_ptx(out)
+    console.print(f"[dim]PTX 原文 {out / 'ptx'}[/]")
+
+
+def _print_ptx(run_dir: Path) -> None:
+    from rich.table import Table
+
+    from klab.harness.ptxdump import ALWAYS_SHOW, PTX_FAMILIES
+
+    data = json.loads((run_dir / "result.json").read_text())
+    for r in data["results"]:
+        counts = r["counts"]
+        gens = r["generations"]
+        t = Table(title=f"{data['kernel']} · {r['kernel']} · {data['device']['device']}(cc {data['device']['cc']})", expand=True)
+        t.add_column("指令族", width=14); t.add_column("最低架构", width=9); t.add_column("条数", justify="right", width=6); t.add_column("说明", overflow="fold", ratio=1)
+        for prefix, arch, marker, note in PTX_FAMILIES:
+            n = counts.get(prefix, 0)
+            if n == 0 and prefix not in ALWAYS_SHOW:
+                continue
+            t.add_row(prefix, arch, str(n), note, style="dim" if n == 0 else ("bold" if marker else None))
+        console.print(t)
+        hit = " + ".join(gens) if gens else "没有任何标志指令(没走 tensor core / 异步拷贝)"
+        console.print(f"命中世代:[bold]{hit}[/bold]  ·  PTX {r['ptx_lines']} 行 · {r['file']}")
 
 
 @app.command()
