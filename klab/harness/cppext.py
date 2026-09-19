@@ -32,11 +32,17 @@ def tk_macro(major: int, minor: int) -> str:
     return "KITTENS_SM80"
 
 
-def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = False, extra_cuda_cflags: list[str] | None = None):
-    """从 specs/<名>/spec.py 调用:编译 kernels/<名>/ 下的 sources。"""
+def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = False,
+                   extra_cuda_cflags: list[str] | None = None, spec_sources: list[str] | None = None):
+    """从 specs/<名>/spec.py 调用:编译 kernels/<名>/ 下的 sources。
+
+    spec_sources 是 specs/<名>/ 下的文件,一起编进来。torch / pybind 的绑定样板放这里,
+    用户的 .cu 就只剩 __global__ kernel 与启动它的那几行,不必 include torch。
+    """
     from klab.harness.spec import kernel_dir_of
 
-    kdir = kernel_dir_of(Path(spec_file).resolve().parent)
+    sdir = Path(spec_file).resolve().parent
+    kdir = kernel_dir_of(sdir)
     major, minor = _arch()
     arch = f"sm_{major}{minor}"
     build = Path(os.path.expanduser(f"~/.cache/klab/{name}-{arch}"))
@@ -44,7 +50,9 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
     # TK 在 sm_90 及以后要求架构专属特性集(compute_90a / 120a 那种带 a 的),裸 CUDA 也一并用它,不损失什么
     suffix = "a" if (tk and major >= 9) else ""
     cflags = ["-O3", "-std=c++20", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda",
-              f"-gencode=arch=compute_{major}{minor}{suffix},code=sm_{major}{minor}{suffix}", "-lineinfo"]
+              # code 同时给 sm_(SASS)与 compute_(PTX):不嵌 PTX 的话 klab ptx 用 cuobjdump 什么也抠不出来
+              f"-gencode=arch=compute_{major}{minor}{suffix},code=[sm_{major}{minor}{suffix},compute_{major}{minor}{suffix}]",
+              "-lineinfo"]
     includes: list[str] = []
     if tk:
         root = os.path.expanduser(os.environ.get("KLAB_TK_ROOT") or str(kdir.parents[1] / "envs" / "tk" / "ThunderKittens"))  # 环境变量里可能带 ~
@@ -58,7 +66,7 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
 
     return load(
         name=name,
-        sources=[str(kdir / s) for s in sources],
+        sources=[str(kdir / s) for s in sources] + [str(sdir / s) for s in (spec_sources or [])],
         extra_cuda_cflags=cflags,
         extra_include_paths=includes,
         build_directory=str(build),

@@ -79,7 +79,7 @@ runs/<时间>-<算子>-<后端>-<模式>/
 | `klab/harness/runner.py` | **在后端跑**;check / bench / ncu / sweep / ptx 五种模式;`ARCH_FEATURES` 门禁表 | 只能依赖 torch 与标准库 |
 | `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
 | `klab/harness/probe.py` | 设备属性 + 实测带宽 / matmul 吞吐 | 实测值手工填回 `targets.toml` 的 `peak_*` |
-| `klab/harness/cppext.py` | cuda / tk 工具链的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这 |
+| `klab/harness/cppext.py` | cuda / tk 工具链的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这;`spec_sources` 让接线把 torch/pybind 绑定文件一起编,用户的 `.cu` 就只写 CUDA |
 | `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个 |
 | `klab/kreport.py` | 体检单:raw CSV + details 文本 + 最近一次 bench → markdown | 指标名依赖 NCU 版本,tests 里守着 |
 | `klab/report.py`、`klab/compare.py` | 终端表格;对比表 | |
@@ -140,7 +140,9 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 - ThunderKittens:sm_90 起要 `compute_XXa` 架构目标;宏 `KITTENS_SM<xx>` 只能定义一个;`gl` 的编译期维度要传 `nullptr`,用 `make_gl<GL>(ptr, b, d, r, c)` 省事;`warpid()` 在 `kittens::` 命名空间。
 - torch 扩展里用 `getCurrentCUDAStream` 要 `#include <ATen/cuda/CUDAContext.h>`。
 - Triton 3.8 的编译缓存是 `JITFunction.device_caches`(旧版叫 `cache`),device → tuple → dict 嵌套,层级各版本不同;`ptxdump._walk()` 按容器递归找叶子,不写死结构。
-- PTX 里出现 `stmatrix` 不代表用上了 Hopper:它 sm_90 起就有,5090 照样发。判定只认标志指令(`mma.sync` / `cp.async` / `wgmma` / `cp.async.bulk` / `tcgen05`)。
+- PTX 里出现 `stmatrix` 不代表用上了 Hopper:它 sm_90 起就有,5090 照样发。判定只认标志指令(`mma.sync` / `wmma.mma` / `cp.async` / `wgmma` / `cp.async.bulk` / `tcgen05`)。
+- `nvcuda::wmma` 在 PTX 里是 `wmma.mma.sync`,**不是** `mma.sync` —— 漏了这一族会把手写 WMMA 的 kernel 判成「没走 tensor core」。
+- nvcc 的 `-gencode` 只写 `code=sm_XX` 时产物里不嵌 PTX,`cuobjdump -ptx` 什么也抠不出来;要 `code=[sm_XX,compute_XX]`。
 
 **数值**
 

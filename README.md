@@ -69,7 +69,7 @@ uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 
 
 编辑器里的代码停手约 1 秒自动存回 `kernels/<名>/kernel.py`(git 照常管它);每次运行另存一份源码快照到 `runs/<id>/submission/`,所以「这个 204 TFLOPS 对应哪份代码」永远查得到。「↺ 重置」恢复成 `problems/<题>/backbone/<工具链>.py`:**契约(启动常量 + 函数签名)给全,函数体留空**,和 LeetCode 给你函数签名是一个意思。
 
-**一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面目前挂着 triton 与 tilelang 两个实现(cuda / cute 待加),同样的 case 与容差,数字可以直接横着比 —— 编辑器头部下拉切语言,右上角下拉切后端。
+**一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面挂着 triton / tilelang / cuda 三个实现(cute 待加),同样的 case 与容差,数字可以直接横着比 —— 编辑器头部下拉切语言,右上角下拉切后端。
 
 编辑器是 Monaco(MIT,24 MB 预编译产物),首次运行 `klab web` 时自动从 npm registry 取到 `klab/webui/vendor/`(gitignore,照 ThunderKittens 的先例)。取不到也能用,会退回纯文本编辑框。除此之外**不引入任何依赖**:服务端是 stdlib 的 `http.server`,没有 web 框架、没有构建步骤、没有 node 运行时。
 
@@ -134,7 +134,9 @@ uv run klab ptx matmul_triton_ampere            # 判定:命中世代 Ampere(mma
 
 「命中世代」只看**标志指令**:`mma.sync` / `cp.async`(Ampere)、`wgmma` / `cp.async.bulk`(Hopper)、`tcgen05`(数据中心 Blackwell)。`ldmatrix` / `stmatrix` / `mbarrier` / `setmaxnreg` 是辅助指令,只报条数不进判定 —— 它们「某代起就有」,5090(sm_120)照样会发 `stmatrix`,出现了并不说明你用上了那一代的核心能力。
 
-形状是运行期参数,PTX 只随 tile 常量变,所以默认只跑第一个 case。目前只接了 triton;其他工具链的取法(tilelang 生成的 `.cu`、CuTe 的 JIT cubin、cppext 编出的 `.so`)等各自有算子时按实测补,加法见 `klab/harness/ptxdump.py` 的 `_COLLECTORS`。
+形状是运行期参数,PTX 只随 tile 常量变,所以默认只跑第一个 case。已接 triton(读 JIT 缓存)与 cuda / tk(`cuobjdump -ptx` 抠 cppext 编出的 `.so`);tilelang 与 cute 等各自有算子时按实测补,加法见 `klab/harness/ptxdump.py` 的 `_COLLECTORS`。
+
+注意 `nvcuda::wmma` 在 PTX 里是 `wmma.mma.sync` 而不是 `mma.sync`,两者都算命中 Ampere。
 
 ## 算子体检单(固定模板)
 

@@ -181,7 +181,7 @@ def do_ptx(spec: KernelSpec, mod, cases: list[dict], out_dir: Path) -> list[dict
     inputs = mod.make_inputs(case, "cuda")
     mod.run(**inputs)
     torch.cuda.synchronize()
-    records = ptxdump.dump(spec.toolchain, out_dir)
+    records = ptxdump.dump(spec, out_dir)
     for r in records:
         hit = ", ".join(f"{k}×{v}" for k, v in sorted(r["counts"].items())) or "(无)"
         print(f"[ptx] {r['kernel']:<16} {r['ptx_lines']:>5} 行  世代 {r['generations'] or ['—']}  {hit}", flush=True)

@@ -71,3 +71,18 @@ def test_ampere_only_ptx_shows_no_hopper_or_blackwell():
     c = count(ampere)
     assert generations(c) == ["Ampere"]
     assert c.get("wgmma", 0) == 0 and c.get("tcgen05", 0) == 0
+
+
+def test_wmma_counts_as_tensor_core_not_as_nothing():
+    """nvcuda::wmma 在 PTX 里是 wmma.mma.sync,不是 mma.sync —— 初版指令表漏了这一族,
+    导致手写 WMMA 的 kernel 被判成「没走 tensor core」。5090 实测 PTX 里就是这几条。"""
+    ptx = "\n".join([
+        "\twmma.load.a.sync.aligned.row.m16n16k16.bf16 {%r1,%r2,%r3,%r4}, [%rd5], 24;",
+        "\twmma.load.b.sync.aligned.row.m16n16k16.bf16 {%r6,%r7,%r8,%r9}, [%rd10], 128;",
+        "\twmma.mma.sync.aligned.row.row.m16n16k16.f32.bf16.bf16.f32 {%f1,%f2}, {%r1}, {%r6}, {%f1,%f2};",
+        "\twmma.store.d.sync.aligned.row.m16n16k16.shared.f32 [%r20], {%f1,%f2}, 16;",
+    ])
+    c = count(ptx)
+    assert c["wmma.mma"] == 1 and c["wmma.load"] == 2 and c["wmma.store"] == 1
+    assert generations(c) == ["Ampere"], "WMMA 也是 tensor core,不能判成什么都没命中"
+    assert c.get("wgmma", 0) == 0, "wmma 不能被算成 wgmma"

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -18,7 +19,10 @@ PTX_FAMILIES: list[tuple[str, str, bool, str]] = [
     ("wgmma",         "sm_90",  True,  "warpgroup 异步 MMA —— Hopper 的标志指令"),
     ("tcgen05",       "sm_100", True,  "第五代 tensor core / tmem —— 数据中心 Blackwell 的标志指令"),
     ("cp.async.bulk", "sm_90",  True,  "TMA 批量异步拷贝 —— Hopper 的标志指令"),
-    ("mma.sync",      "sm_80",  True,  "同步 tensor core MMA —— Ampere 的标志指令"),
+    ("mma.sync",      "sm_80",  True,  "同步 tensor core MMA —— Ampere 的标志指令(手写 PTX / Triton 的 tl.dot 走这条)"),
+    ("wmma.mma",      "sm_80",  True,  "WMMA 的矩阵乘 —— nvcuda::wmma 降下来的样子,同样是 tensor core(bf16 要 sm_80)"),
+    ("wmma.load",     "sm_70",  False, "WMMA 装载 fragment"),
+    ("wmma.store",    "sm_70",  False, "WMMA 写回 fragment"),
     ("cp.async",      "sm_80",  True,  "global -> shared 异步拷贝(多级流水)—— Ampere 的标志指令"),
     ("ldmatrix",      "sm_75",  False, "shared -> 寄存器的 tile 装载"),
     ("stmatrix",      "sm_90",  False, "寄存器 -> shared 的 tile 回写"),
@@ -35,6 +39,7 @@ PTX_FAMILIES: list[tuple[str, str, bool, str]] = [
 # 标志指令 -> 它代表的世代。只有这张表参与「命中世代」的判定。
 MARKER_GENERATION = {
     "mma.sync": "Ampere",
+    "wmma.mma": "Ampere",
     "cp.async": "Ampere",
     "wgmma": "Hopper",
     "cp.async.bulk": "Hopper",
@@ -99,7 +104,7 @@ def _walk(obj, depth: int = 0):
         yield obj
 
 
-def _from_triton() -> dict[str, str]:
+def _from_triton(spec) -> dict[str, str]:
     """扫用户 kernel 模块里的 @triton.jit 函数,从它们的编译缓存取 PTX。"""
     from triton.runtime.jit import JITFunction
 
@@ -118,22 +123,47 @@ def _from_triton() -> dict[str, str]:
     return out
 
 
-# 一种工具链一个取法。tilelang / cute / cuda / tk 还没接:它们的产物分别是
-# 生成的 .cu + nvcc、JIT 的 cubin、cppext 编出的 .so,取法不同,等各自有算子时再按实测补。
+def _from_cppext(spec) -> dict[str, str]:
+    """cuda / tk:cppext 把 .cu 编成 torch 扩展的 .so,用 cuobjdump 把 PTX 抠出来。
+
+    编译产物在 ~/.cache/klab/<算子名>-<架构>/;按名字直接定位,不去猜 sys.modules
+    里模块的 __file__(torch 的 cpp_extension 不保证把它设成 .so 路径)。
+    """
+    import subprocess
+
+    cache = Path(os.path.expanduser("~/.cache/klab"))
+    sos = sorted(p for d in cache.glob(f"{spec.name}-*") if d.is_dir() for p in d.glob("*.so"))
+    if not sos:
+        raise SystemExit(f"{cache}/{spec.name}-*/ 下没有编译产物:先跑一次 klab check")
+    out: dict[str, str] = {}
+    for so in sos:
+        r = subprocess.run(["cuobjdump", "-ptx", str(so)], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"cuobjdump 失败({so.name}):{r.stderr.strip()[:200]}")
+        if r.stdout.strip():
+            out[so.stem] = r.stdout
+    return out
+
+
+# 一种工具链一个取法。tilelang / cute 还没接:tilelang 走 nvcc 生成 .cu、
+# CuTe 是 JIT 出 cubin,取法都和上面两种不同,等各自有算子时再按实测补。
 _COLLECTORS = {
     "triton": _from_triton,
+    "cuda": _from_cppext,
+    "tk": _from_cppext,
 }
 
 
-def collect(toolchain: str) -> dict[str, str]:
-    """{kernel 名: PTX 文本}。调用前必须已经跑过一次算子,否则 JIT 缓存是空的。"""
+def collect(spec) -> dict[str, str]:
+    """{kernel 名: PTX 文本}。调用前必须已经跑过一次算子,否则编译缓存是空的。"""
+    toolchain = spec.toolchain
     fn = _COLLECTORS.get(toolchain)
     if fn is None:
         raise SystemExit(
             f"klab ptx 还没接 {toolchain} 工具链(目前只有 {list(_COLLECTORS)});"
             "加法:在 klab/harness/ptxdump.py 的 _COLLECTORS 里补一个取 PTX 的函数"
         )
-    asm = fn()
+    asm = fn(spec)
     if not asm:
         raise SystemExit(
             "编译缓存里没有 PTX:确认 kernel 真的被启动过一次,"
@@ -142,12 +172,12 @@ def collect(toolchain: str) -> dict[str, str]:
     return asm
 
 
-def dump(toolchain: str, out_dir: Path) -> list[dict]:
+def dump(spec, out_dir: Path) -> list[dict]:
     """取 PTX、写盘、计数。返回给 result.json 用的记录。"""
     d = out_dir / "ptx"
     d.mkdir(parents=True, exist_ok=True)
     records = []
-    for name, ptx in collect(toolchain).items():
+    for name, ptx in collect(spec).items():
         path = d / f"{name}.ptx"
         path.write_text(ptx)
         c = count(ptx)
