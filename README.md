@@ -2,10 +2,12 @@
 
 Mac 上写算子,远端 GPU 上编译、跑、测速、NCU。执行后端可插拔,用 `--target` 显式选。
 
+日常入口是 **`uv run klab web`** —— 一个对标 LeetCode 的本地面板:左边题面与优化路线,右边写算子,Run 看对不对、Submit 出 NCU 体检单。CLI 仍然是全功能的,面板只是它的皮。
+
 本文面向使用。agent 的操作流程在 **[docs/01-AGENT-PLAYBOOK.md](docs/01-AGENT-PLAYBOOK.md)**,维护与扩展看 **[docs/00-START.md](docs/00-START.md)**。本地测试:`uv run pytest`。
 
 ```text
-Mac VSCode ── klab CLI ──┬── ssh:5090home   (home lab,RTX 5090)
+Mac 浏览器/CLI ── klab ──┬── ssh:5090home   (home lab,RTX 5090)
                          ├── ssh:<租的机器> (vast / runpod / autodl,同一套 SshTarget)
                          ├── modal-h100     (Modal 云 GPU,gpu 字段选卡型)
                          └── local          (在 GPU 盒子上调试 harness 自己用)
@@ -13,7 +15,7 @@ Mac VSCode ── klab CLI ──┬── ssh:5090home   (home lab,RTX 5090)
 
 三层分离:**代码住在 Mac**(本仓库,git 管理);**环境定义在仓库里**(`envs/<工具链>/`);**后端只回答「在哪跑」**(`targets.toml`)。
 
-用户与 agent 的目录分开:**`kernels/<名>/` 只放用户写的算子源码**;`specs/<名>/` 是 agent 写的接线(工具链、case、参考实现)。
+用户与 agent 的目录分开:**`kernels/<名>/` 只放算子源码**(面板的编辑器写的就是它);`specs/<名>/` 是 agent 写的接线(工具链、case、参考实现),`problems/<题>/` 是 agent 写的题面与优化路线。
 
 ## 日常用法
 
@@ -26,6 +28,8 @@ uv run klab run   softmax                      # 一条龙:check → bench → n
 uv run klab check softmax                      # 正确性(<算子> 可写名字、kernels/<名>、specs/<名> 或其中的文件)
 uv run klab bench softmax --target modal-h100  # 先 check 再测速,报「相对 torch 参考」的倍数
 uv run klab ncu   softmax --case 8192x8192-f16 --open   # NCU,拉回报告并用本地 Nsight Compute 打开
+uv run klab ptx   softmax                      # dump PTX,按世代统计 mma.sync / wgmma / cp.async / tcgen05 等指令
+uv run klab web                                # 面板(日常入口,见下一节)
 uv run klab sh    --target 5090home            # 进后端 shell(已 cd 到远端 repo)
 uv run klab exec  "nvidia-smi" --target modal-h100   # 在后端执行一段命令(诊断)
 uv run klab report runs/<某次 ncu 运行>          # 重新渲染体检单
@@ -34,13 +38,42 @@ uv run klab sweep matmul --case 4096-f16        # 按 meta.toml [sweep] 扫参,�
 uv run klab baseline matmul                     # 把最新 bench 钉成基线;之后 bench 自动报与基线的差
 ```
 
-VSCode 里打开 `kernels/<名>/kernel.py`,`Tasks: Run Task` 选 `klab: run 当前算子`(或 check / bench / ncu),任务会弹出后端选择框。想绑快捷键,在用户级 `keybindings.json` 加:
-
-```json
-{ "key": "cmd+k cmd+b", "command": "workbench.action.tasks.runTask", "args": "klab: bench 当前算子" }
-```
+也可以继续用 VSCode 写 `kernels/<名>/kernel.py`:`Tasks: Run Task` 选 `klab: run 当前算子`(或 check / bench / ncu),任务会弹出后端选择框。面板与 VSCode 改的是同一个文件,两边可以混着用。
 
 每次运行在 `runs/<时间>-<算子>-<后端>-<模式>/` 落一份 `result.json`;NCU 另有 `ncu.ncu-rep`(GUI 打开)、`ncu-details.txt`(直接在编辑器里读)、`ncu-raw.csv`。`runs/` 不进 git。
+
+## 本地面板(算子版 LeetCode)
+
+```bash
+uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 不开,--port 换端口
+```
+
+布局对标 LeetCode:**左边题面与讲解,右边写算子**。
+
+| 区域 | 内容 |
+|---|---|
+| 左 · 题目 | `problems/<题>/problem.md`:数学定义、输入约束、评判标准、测试用例 |
+| 左 · 优化路线 | `problems/<题>/editorial.md`:一级一级的优化阶梯,每级标注对应体检单的哪个指标 |
+| 左 · 其他实现 | 同一道题的其他语言实现,点一下就切过去 |
+| 左 · 提交记录 | 历次提交的判定与数字;点开看**当次提交的源码快照** |
+| 左 · 结果 | 体检单。Submit 完自动切到这里 |
+| 右 · 编辑器 | Monaco(VSCode 同款内核),Python / CUDA 高亮 + 算子 API 片段补全 |
+| 右 · 控制台 | case 选择 + 流式日志 + 判定 |
+
+**Run 与 Submit 是两件事**,和 LeetCode 一样:
+
+| 按钮 | 干什么 | 多久 | 快捷键 |
+|---|---|---|---|
+| ▶ Run | `klab check`,只看对不对 | 几秒 | ⌘↵ |
+| ⬆ Submit | `klab run`:check → bench → ncu → 体检单 | 约一分钟 | ⌘⇧↵ |
+
+编辑器里的代码停手约 1 秒自动存回 `kernels/<名>/kernel.py`(git 照常管它);每次运行另存一份源码快照到 `runs/<id>/submission/`,所以「这个 204 TFLOPS 对应哪份代码」永远查得到。「↺ 重置」用 `problems/<题>/templates/<工具链>.py` 的骨架覆盖当前代码。
+
+**一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面挂 triton / tilelang / cute / cuda 四个实现,同样的 case 与容差,数字可以直接横着比 —— 右上角下拉切语言,旁边下拉切后端。
+
+编辑器是 Monaco(MIT,24 MB 预编译产物),首次运行 `klab web` 时自动从 npm registry 取到 `klab/webui/vendor/`(gitignore,照 ThunderKittens 的先例)。取不到也能用,会退回纯文本编辑框。除此之外**不引入任何依赖**:服务端是 stdlib 的 `http.server`,没有 web 框架、没有构建步骤、没有 node 运行时。
+
+只监听 `127.0.0.1`;算子名 / 后端名 / case 名一律先过白名单才进子进程命令行,子进程不走 shell。后端就一张卡,所以一次只许跑一个,跑着的时候再提交会被拒。
 
 ## 写一个算子
 
@@ -64,16 +97,15 @@ specs/<名>/baselines/       klab baseline 钉下的基线
 
 `meta.toml` 的 `requires.features` 是架构门禁:5090 是 sm_120,没有 wgmma / tcgen05 / cluster,声明了这些特性的算子打 5090 会被拒并提示换 target。
 
-样板(五种工具链各至少一个):
+题面、优化路线与各语言骨架在 `problems/<题>/`,由 `meta.toml` 的 `problem` 键关联:
 
-| 算子 | 工具链 | 说明 |
-|---|---|---|
-| `vector_add`、`softmax` | triton | 最小链路;融合行 softmax |
-| `matmul` | triton | 分块 matmul,声明需要 wgmma(演示门禁),带 `[sweep]` |
-| `matmul_tl` | tilelang | 与上面同尺寸,跨 DSL 对照,带 `[sweep]` |
-| `matmul_cute` | cute | NVIDIA 官方 CuTe DSL 示例原样 vendor 在 `_vendor/`,按卡挑 sm_120 或 Hopper 类 |
-| `sgemm_cuda` | cuda | 经典共享内存分块 SGEMM(fp32、CUDA core),`.cu` 现场 nvcc 编成 torch 扩展 |
-| `tile_add_tk` | tk | ThunderKittens 烟测:寄存器 tile 的 load / add / store |
+```text
+problems/<题>/problem.md              题面:数学定义、输入约束、评判标准
+problems/<题>/editorial.md            优化路线:一级级的优化阶梯,每级标注对应体检单哪个指标
+problems/<题>/templates/<工具链>.py    骨架,面板的「重置」用它
+```
+
+五种工具链的样板算子在 git 历史里(`git show 655f0e3 --stat`),需要时捞出来当参考。
 
 `cuda` 与 `tk` 的 `spec.py` 通过 `klab.harness.cppext.load_extension()` 编译 `kernels/<名>/` 下的 `.cu`,缓存在后端的 `~/.cache/klab/<名>-<架构>`(Modal 用 Volume 持久化)。
 
@@ -90,6 +122,18 @@ specs/<名>/baselines/       klab baseline 钉下的基线
 5090home 已把驱动的 `RestrictProfilingToAdminUsers` 关掉,非 root 可用;租来的机器需要同样条件或 root,容器里还要 `--cap-add=SYS_ADMIN`。
 
 Modal 的 H100 容器里 ncu 可用、计数器可读(2026-09-18 实测),但锁不了 GPU 时钟,所以 `targets.toml` 里给它设了 `ncu_clock_control = "none"`;数字会比锁频的 5090 抖一些。
+
+## PTX:确认降到了哪一代指令
+
+体检单只说 Tensor pipe 用了多少,不说走的是哪条指令。练「某一代的特性」时用 `klab ptx`:在后端跑一次触发编译,从编译缓存取 PTX,按指令族计数,PTX 原文落 `runs/<id>/ptx/<kernel>.ptx`。
+
+```bash
+uv run klab ptx matmul_triton_ampere            # 判定:命中世代 Ampere(mma.sync×64, cp.async×32)
+```
+
+「命中世代」只看**标志指令**:`mma.sync` / `cp.async`(Ampere)、`wgmma` / `cp.async.bulk`(Hopper)、`tcgen05`(数据中心 Blackwell)。`ldmatrix` / `stmatrix` / `mbarrier` / `setmaxnreg` 是辅助指令,只报条数不进判定 —— 它们「某代起就有」,5090(sm_120)照样会发 `stmatrix`,出现了并不说明你用上了那一代的核心能力。
+
+形状是运行期参数,PTX 只随 tile 常量变,所以默认只跑第一个 case。目前只接了 triton;其他工具链的取法(tilelang 生成的 `.cu`、CuTe 的 JIT cubin、cppext 编出的 `.so`)等各自有算子时按实测补,加法见 `klab/harness/ptxdump.py` 的 `_COLLECTORS`。
 
 ## 算子体检单(固定模板)
 

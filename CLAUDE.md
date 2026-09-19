@@ -24,5 +24,9 @@
 - `klab/harness/` 在后端运行,只能依赖 torch 与标准库。
 - 仓库里不放任何凭据;Modal 读 `~/.modal.toml`,SSH 读 `~/.ssh/config`。
 - `kernels/*/_vendor/` 是第三方原文,不改。
-- 不做 `--target auto`(用户搁置),不做网页,不引入数据库。
-- 任何改动先 `uv run pytest`;改了跑 GPU 的部分按 `docs/00-START.md` 第六节的矩阵上机验证;不能上机就明说没验证。
+- 不做 `--target auto`(用户搁置),不引入数据库,不引入 web 框架。
+- `klab web` 是本地面板(只绑 127.0.0.1),对标 LeetCode:左题面/讲解/提交记录/体检单,右 Monaco 编辑器。**用户现在在网页里写算子,不再用 VSCode。**
+- 面板只读 `runs/` 与仓库源码、只 fork `klab` 子进程,不做多用户。「文件即数据」不变 —— 面板不许有自己的持久化状态,不许引入 web 框架或构建步骤。
+- 题面与优化路线在 `problems/<题>/`(agent 写);`meta.toml` 的 `problem` 键把同一道题的多语言实现聚在一起。
+- `kernels/<名>/` 仍然只放算子源码,但现在是网页编辑器在写它;agent 照旧不擅自改,除非用户要求。
+- 任何改动先 `uv run pytest`;改了跑 GPU 的部分按 `docs/00-START.md` 第五节的验证矩阵上机验证;不能上机就明说没验证。

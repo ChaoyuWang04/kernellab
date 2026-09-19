@@ -1,49 +1,65 @@
 # kernellab 维护手册
 
-> **交接语**:这是一个「Mac 上写 GPU 算子、远端机器上跑、性能指标回流 Mac」的个人实验台,**面向 agent 调用**。操作流程(用户丢来一个 kernel时该做什么)在 [01-AGENT-PLAYBOOK.md](01-AGENT-PLAYBOOK.md);本页讲系统怎么运转、改哪里、怎么验证。改动前跑 `uv run pytest`,改了跑 GPU 的部分再按第六节的矩阵上机验证。
+Mac 上写 GPU 算子,远端 GPU 上编译、跑、测速、抓 NCU,结果回流成一张固定模板的体检单。日常入口是 `klab web`(算子版 LeetCode),CLI 是它的全集。
 
-## 一、为什么有这个项目
+本页讲**系统怎么运转、改哪里、怎么验证**。agent 接到「测一下这个 kernel」时的操作流程在 [01-AGENT-PLAYBOOK.md](01-AGENT-PLAYBOOK.md);命令与契约的用法在 [README.md](../README.md)。
 
-用户在 Mac 的 VSCode 上学习和练习写算子(Triton、TileLang、CuTe DSL、裸 CUDA、ThunderKittens),但 Mac 没有 NVIDIA GPU。需求有三条,全部已实现:
+## 一、核心守则
 
-1. **前端只在 Mac**:写、编译、运行、看结果都不离开 VSCode,不建网页。
-2. **后端任意插拔**:同一份算子,显式指定打到 home lab 的 RTX 5090,或 Modal 云上的 H100 / B200,将来还有租用机和昇腾。
-3. **可观测**:每次运行拿到正确性、测速、NCU 计数器,并压成一张固定模板的报告,快速看到算子最重要的信息。
+1. **三层分离**:代码住在 Mac(本仓库,git 管理);环境定义在仓库里(`envs/<工具链>/`);后端只回答「在哪跑」(`targets.toml`)。新功能先问它属于哪一层。
+2. **Target 接口只有四个方法**:`sync / run / fetch / shell`。编译、跑、测速、NCU、扫参全是 `run()` 之上的命令串,**不进后端类**。这是后端可插拔的前提,加后端时不得往接口里加方法。
+3. **四种目录,各有其主**:`kernels/<名>/` 只放算子源码(面板的编辑器写它,agent 不擅自改);`specs/<名>/` 是接线;`problems/<题>/` 是题面与讲解;`runs/` 是结果。后三者是 agent 的。
+4. **spec 契约与 DSL 无关**:只有 `make_inputs / run / reference / workload`(可选 `configure`)。harness 不认识任何 DSL;DSL 差异落在 `toolchains/<name>.py`(怎么装)与 `spec.py`(怎么调)。
+5. **`reference()` 用与算子相同 dtype 的原生 torch 调用**,不许先 `.float()`。它既是 check 的基准,也是 bench 的「相对 torch」标尺。
+6. **文件即数据**:`runs/<id>/result.json` 是唯一的结果真源,体检单、对比表、基线、面板全从它推导。不引入数据库,面板不许有自己的持久化状态。
+7. **面板不许引入 web 框架或构建步骤**:服务端是 stdlib `http.server`,前端是无构建单页,编辑器是预编译的 Monaco。它只读仓库与 `runs/`、只 fork `klab` 子进程。
+8. **`klab/harness/` 在后端运行**,只能依赖 torch 与标准库。
+9. **显式优先,有默认值**:后端用 `--target` 选,不给就用 `targets.toml` 的 `[defaults] target`。架构门禁只负责拒绝不匹配的组合并提示。
+10. **不放凭据**:Modal 读 `~/.modal.toml`,SSH 读 `~/.ssh/config`,仓库里没有也不允许有 token。
+11. **不为未验证的平台写代码**:没上过机的后端只加 `targets.toml` 配置,不写猜测性的适配器。
+12. **任何改动先 `uv run pytest`**;改了跑 GPU 的部分按第五节上机验证,不能上机就明说没验证。
+13. **改动必须同步**:加后端 / 加工具链 / 改契约 = 代码 + README 对应节 + `tests/`;改了 agent 的操作流程还要同步 playbook。同一件事只在一处完整解释,另一处链接。
+14. 提交信息用中文,写清改了哪一层。`runs/`、`.venv/`、`envs/tk/ThunderKittens/`、`klab/webui/vendor/` 不进 git。
 
-它与 `~/1Project/interviewprep`(面试准备系统)并排、**互不引用代码**。那边的 `projects/Kernel与GPU编程/` 下有 triton、tilelang、cutlass 等源码镜像,只作阅读材料。算子实验得到的理解写回那边的知识库文章,不在这里沉淀文档。
+## 二、启动
 
-## 二、设计原则(改代码前先对照)
+```bash
+uv sync                    # 首次:装本地 CLI
+uv run pytest              # 应全绿
+uv run klab web            # 面板,http://127.0.0.1:8777,自动开浏览器
+```
 
-1. **三层分离**:代码住在 Mac(本仓库,git 管理);环境定义在仓库里(`envs/<工具链>/`);后端只回答「在哪跑」(`targets.toml`)。任何新功能先问它属于哪一层。
-2. **Target 接口只有四个方法**:`sync / run / fetch / shell`。编译、跑、测速、NCU、扫参全是 `run()` 之上的命令串,**不进后端类**。这是插拔成立的前提,加后端时不得往接口里加方法。
-3. **用户的目录与 agent 的目录分开**:`kernels/<名>/` 只有用户写的算子源码,harness 不动它;`specs/<名>/` 是 agent 写的接线(`meta.toml` + `spec.py` + `baselines/`)。契约只有 `make_inputs / run / reference / workload`(可选 `configure`),与 DSL 无关;DSL 差异落在 `toolchains/<name>.py`(怎么装)和 `spec.py`(怎么调)。
-4. **文件即数据**:`runs/<id>/result.json` 是唯一的结果真源,报告、对比表、基线都从它推导;不引入数据库、不做网页。
-5. **显式优先,有默认值**:后端用 `--target` 选,不给就用 `targets.toml` 的 `[defaults] target`(5090home);选择规则写在 `targets.toml` 注释里。门禁只负责拒绝不匹配的组合并提示。`--target auto` 用户 2026-09-18 明确决定先不做。
-6. **不放凭据**:Modal 读 `~/.modal.toml`,SSH 读 `~/.ssh/config`,仓库里没有也不允许有 token。
-7. **不为未验证的平台写代码**:租用机、昇腾都还没上过机,只留设计说明(第八节),不写猜测性的适配器。
+`klab web` 首次运行会自动取 Monaco 编辑器(MIT,约 24 MB)到 `klab/webui/vendor/`;取不到也能用,退回纯文本编辑框。Ctrl-C 退出。
 
-## 二点五、在一台新 Mac 上首次上手
+新机器还需要:
 
-1. 装 `uv`;仓库根 `uv sync`;`uv run pytest` 应全绿。
-2. `~/.ssh/config` 里要有 `5090home` 别名(现有配置用 ProxyCommand 在局域网与 FRP 间自动选路,私钥 `~/.ssh/home_5090_local_ed25519`);`ssh 5090home true` 通了再继续。
-3. Modal:`uv run modal setup` 登录一次,生成 `~/.modal.toml`;仓库不存 token。
-4. 每种工具链在每个后端第一次用前 `klab setup --target <后端> --toolchain <名>`;远端根目录 `~/klab/{repo,envs,runs}` 可随时删掉重建。
-5. 本地 Nsight Compute GUI(`/Applications/NVIDIA Nsight Compute.app`)用于打开 `.ncu-rep`,非必需。
+1. `~/.ssh/config` 里有 `5090home` 别名(ProxyCommand 在局域网与 FRP 间自动选路,私钥 `~/.ssh/home_5090_local_ed25519`);`ssh 5090home true` 通了再继续。
+2. Modal:`uv run modal setup` 登录一次,生成 `~/.modal.toml`。
+3. 每种工具链在每个后端第一次用前 `klab setup --target <后端> --toolchain <名>`;远端 `~/klab/{repo,envs,runs}` 可随时删掉重建。
+4. 本地 Nsight Compute GUI(`/Applications/NVIDIA Nsight Compute.app`)用于打开 `.ncu-rep`,非必需。
 
 ## 三、架构与数据流
 
 ```text
-Mac VSCode ── klab CLI(uv venv,只装 typer/rich/modal)
-      │  ① sync   rsync 仓库(排除 .git/.venv/runs)→ 远端 <root>/repo   |  Modal: add_local_dir 挂载
-      │  ② run    ssh host bash -c "<命令串>"                             |  Modal: 远程函数里 bash -c
-      │           命令串 = export PATH/PYTHONPATH/KLAB_* ; cd repo ; <python> -m klab.harness.runner ...
-      │  ③ fetch  rsync 远端 <root>/runs/<id> → 本地 runs/<id>            |  Modal: 函数返回 runs 的 tar
+浏览器(klab web,stdlib http.server + 无构建单页 + Monaco)
+      │  编辑器改的是 kernels/<名>/kernel.py;Run/Submit fork 出 klab 子进程
       ▼
-runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details.txt, ncu-raw.csv, report.md)
+klab CLI(uv venv,只装 typer/rich/modal)
+      │  ① sync   rsync 仓库(排除 .git/.venv/runs)→ 远端 <root>/repo  |  Modal: add_local_dir 挂载
+      │  ② run    ssh host bash -c "<命令串>"                           |  Modal: 远程函数里 bash -c
+      │           命令串 = export PATH/PYTHONPATH/KLAB_* ; cd repo ; <python> -m klab.harness.runner ...
+      │  ③ fetch  rsync 远端 <root>/runs/<id> → 本地 runs/<id>          |  Modal: 函数返回 runs 的 tar
+      ▼
+runs/<时间>-<算子>-<后端>-<模式>/
+      result.json                              唯一真源
+      report.md + ncu.ncu-rep + ncu-details.txt + ncu-raw.csv   (ncu 模式)
+      ptx/<kernel>.ptx                         (ptx 模式)
+      submission/                              当次运行的源码快照
       │
       ├─ klab report   → 体检单(kreport.py)
       ├─ klab compare  → 跨算子 / 跨后端表(compare.py)
-      └─ klab baseline → specs/<名>/baselines/<后端>.json,bench 时报差
+      ├─ klab baseline → specs/<名>/baselines/<后端>.json,bench 时报差
+      └─ klab web      → 面板的「结果」「提交记录」两个 tab
 ```
 
 远端只有三样东西:`<root>/repo`(仓库副本)、`<root>/envs/<工具链>`(uv venv,SSH 后端)或镜像(Modal)、`<root>/runs`(结果)。远端不保存任何不能从 Mac 重建的状态,机器丢了重跑 `klab setup` 即可。
@@ -52,70 +68,52 @@ runs/<时间>-<算子>-<后端>-<模式>/result.json (+ ncu.ncu-rep, ncu-details
 
 | 路径 | 职责 | 改动时注意 |
 |---|---|---|
-| `klab/cli.py` | 所有命令的入口;`_remote_run()` 是 check/bench/sweep 的公共路径,ncu 有自己的 `run_with_ncu()` | 新命令先看能否复用 `_remote_run` |
+| `klab/cli.py` | 所有命令的入口;`_remote_run()` 是 check/bench/sweep/ptx 的公共路径,ncu 有自己的 `_ncu_impl()` | 新命令先看能否复用 `_remote_run` |
 | `klab/config.py` | 读 `targets.toml`;`TargetConfig.extra` 原样透传后端私有选项 | 新字段优先走 `extra`,不改数据类 |
 | `klab/targets/base.py` | Target 抽象;`env_prefix()` 决定远端 PATH/PYTHONPATH/KLAB_ROOT/KLAB_TK_ROOT | 远端找不到命令十有八九是这里 |
 | `klab/targets/ssh.py` | rsync + ssh,ControlMaster 复用连接 | Mac 的 rsync 是 openrsync,只用 `-az --delete --exclude` |
-| `klab/targets/modal.py` | 镜像构建、挂载、Volume 缓存、直连/代理选路、输出回流 | 见第七节的四个坑 |
+| `klab/targets/modal.py` | 镜像构建、挂载、Volume 缓存、直连/代理选路、输出回流 | 见第六节 |
 | `klab/targets/local.py` | 在 GPU 盒子上直接跑,调试 harness 用 | |
 | `klab/toolchains/` | 每种工具链一个模块:`setup_script()` + 可选 `APT / MODAL_RUN_COMMANDS / MODAL_ENV / local_prepare()` | 纯 pip 的直接复用 `_pip.py` |
-| `klab/harness/runner.py` | **在后端跑**;check / bench / ncu / sweep 四种模式;`ARCH_FEATURES` 门禁表 | 只能依赖 torch 与标准库 |
-| `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入用户的 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
+| `klab/harness/runner.py` | **在后端跑**;check / bench / ncu / sweep / ptx 五种模式;`ARCH_FEATURES` 门禁表 | 只能依赖 torch 与标准库 |
+| `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
 | `klab/harness/probe.py` | 设备属性 + 实测带宽 / matmul 吞吐 | 实测值手工填回 `targets.toml` 的 `peak_*` |
 | `klab/harness/cppext.py` | cuda / tk 工具链的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这 |
+| `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个 |
 | `klab/kreport.py` | 体检单:raw CSV + details 文本 + 最近一次 bench → markdown | 指标名依赖 NCU 版本,tests 里守着 |
 | `klab/report.py`、`klab/compare.py` | 终端表格;对比表 | |
-| `kernels/<名>/` | **用户的**算子源码(`kernel.py` / `kernel.cu` / `_vendor/`) | 不改、不加文件 |
-| `specs/<名>/` | **agent 的**接线:`meta.toml` + `spec.py` + `baselines/` | 生成规则见 playbook 第 1 节 |
-| `envs/<工具链>/` | `requirements.txt` + `torch-index.txt`;`envs/tk/ThunderKittens/` 是 Mac 上的克隆,gitignore | |
+| `klab/web.py` | 面板服务端:路由、白名单、markdown 子集转 HTML、源码快照、Monaco 取用 | 只读 `runs/` 与源码、只 fork 子进程;算子/后端/case 名一律先过白名单 |
+| `klab/webui/` | 面板前端:`index.html` + `app.css` + `app.js`;`vendor/` 是 Monaco(gitignore) | 无构建,改完刷新即可 |
+| `kernels/<名>/` | 算子源码(`kernel.py` / `kernel.cu` / `_vendor/`) | 面板的编辑器写它;agent 不擅自改 |
+| `specs/<名>/` | 接线:`meta.toml`(含 `problem` 键)+ `spec.py` + `baselines/` | 生成规则见 playbook 第 1 节 |
+| `problems/<题>/` | `problem.md` 题面、`editorial.md` 优化路线、`templates/<工具链>.<后缀>` 骨架 | 靠 `meta.toml` 的 `problem` 键与 `specs/` 关联 |
+| `envs/<工具链>/` | `requirements.txt` + `torch-index.txt`;`envs/tk/ThunderKittens/` 是 Mac 上的克隆,gitignore | 故意不钉版本,见第七节 |
 | `targets.toml` | 后端登记与峰值 | 加后端要同步 `.vscode/tasks.json` 的下拉(tests 守) |
 | `tests/` | 不需要 GPU 的本地测试,夹具是一次真实的 5090 NCU 运行 | |
 | `runs/` | 结果,gitignore | 可随时清空 |
 
-## 五、已实现的功能清单
-
-| 命令 | 做什么 | 状态 |
-|---|---|---|
-| `klab targets` | 列后端 | ✅ |
-| `klab setup --target T --toolchain X` | 后端装环境(SSH:uv venv;Modal:触发镜像构建);幂等 | ✅ 五种工具链 × 两后端 |
-| `klab probe --target T` | 设备属性、实测拷贝带宽与 fp16 matmul 吞吐 | ✅ |
-| `klab run <算子> [--target T]` | 一条龙:check → bench → ncu(第一个 case)→ 体检单;agent 默认用它 | ✅ |
-| `klab check <算子> --target T` | 与 `reference()` 逐 case 比对;先过 `requires` 门禁 | ✅ |
-| `klab bench <算子> --target T` | 先 check;预热、每次刷 L2、event 计时、中位数与分位数、对峰值百分比、**对 torch 参考的倍数**;有基线则报差 | ✅ |
-| `klab ncu <算子> --target T` | 后端跑 ncu(默认七个 section,`--full` 全量),拉回 `.ncu-rep`、文本、CSV,自动渲染体检单 | ✅ |
-| `klab report <run_dir>` | 重渲染体检单 | ✅ |
-| `klab compare [算子...] [-t 后端]` | 每个 (算子, 后端) 取最新 bench,出表 | ✅ |
-| `klab sweep <算子> --target T` | 按 `[sweep]` 笛卡尔积逐组 check + bench,失败组不中断 | ✅ |
-| `klab baseline <算子> --target T` | 钉基线到 `specs/<名>/baselines/<后端>.json` | ✅ |
-| `klab exec "<shell>" --target T` | 在后端 repo 目录执行命令(诊断) | ✅ |
-| `klab sh --target T` | 交互 shell(仅 SSH) | ✅ |
-| `klab open <run_dir>` | 用本地 Nsight Compute 打开 `.ncu-rep` | ✅ |
-| `--target auto` | 按 `requires` 自动挑后端 | ⏸ 用户搁置 |
-
-后端:`5090home`(SSH,RTX 5090 sm_120)、`modal-h100`(Modal,H100 sm_90)。工具链:triton、tilelang、cute、cuda、tk。每种工具链至少一个样板算子,全部在两个后端跑过 check / bench / ncu(2026-09-18)。
-
-观测层的决定:**NCU 是核心,不接 Nsight Systems**。单算子的问题全在计数器里,时间线是整条模型链路的事。
-
-## 六、验证矩阵(改了什么就跑什么)
+## 五、验证矩阵(改了什么就跑什么)
 
 | 改动 | 必跑 | 上机验证 |
 |---|---|---|
 | 任何改动 | `uv run pytest` | |
-| `klab/cli.py`、`klab/config.py` | pytest | `klab check kernels/vector_add --target 5090home` |
-| `klab/targets/ssh.py`、`base.py` | pytest | 同上,再 `klab ncu kernels/vector_add --target 5090home --case 1M` |
-| `klab/targets/modal.py` | pytest | `klab check kernels/matmul --target modal-h100`(注意首次会重建镜像) |
+| `klab/cli.py`、`klab/config.py` | pytest | 一个算子的 `klab check --target 5090home` |
+| `klab/targets/ssh.py`、`base.py` | pytest | 同上,再 `klab ncu` 一次 |
+| `klab/targets/modal.py` | pytest | `klab check <算子> --target modal-h100`(首次会重建镜像) |
 | `klab/harness/runner.py`、`spec.py` | pytest | 一个 triton 算子的 check + bench + ncu,一个 cuda 算子的 check |
-| `klab/harness/cppext.py` | pytest | `klab check kernels/sgemm_cuda` 与 `kernels/tile_add_tk`,两个后端各一次 |
+| `klab/harness/cppext.py` | pytest | 一个 cuda 与一个 tk 算子,两个后端各一次 |
 | `klab/kreport.py` | pytest(夹具) | `klab report` 一个已有的 ncu 运行目录 |
-| `klab/toolchains/*`、`envs/*` | pytest | 对应后端 `klab setup --toolchain X`,再跑该工具链的样板算子 |
+| `klab/harness/ptxdump.py` | pytest(手写 PTX 片段) | `klab ptx` 一个 triton 算子,确认命中世代与卡的架构相符 |
+| `klab/web.py`、`klab/webui/` | pytest(markdown 子集、run 目录解析、题目聚合、白名单) | 面板里 Run 一次 + Submit 一次,确认判定、体检单、提交记录里的源码快照都对 |
+| `klab/toolchains/*`、`envs/*` | pytest | 对应后端 `klab setup --toolchain X`,再跑该工具链的算子 |
 | 新算子接线(`specs/<名>/`) | pytest(契约与目录结构) | `klab run <名>`,ncu 后确认 `kernel_regex` 只抓到自己的 kernel |
-| 新后端 | pytest(tasks.json 下拉) | setup → probe → vector_add check/bench/ncu |
+| 新后端 | pytest(tasks.json 下拉) | setup → probe → 一个算子的 check/bench/ncu |
 | `targets.toml` 峰值 | pytest | 跑一次 `klab probe`,用实测值 |
 | README / 本手册 | 无 | 按第四节的路径核对一遍 |
 
-pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登记、体检单解析与渲染、对比表。它证明不了算子在卡上是对的。
+pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登记、体检单解析与渲染、对比表、面板路由与渲染。**它证明不了算子在卡上是对的。**
 
-## 七、踩过的坑(改相关代码前先看)
+## 六、踩过的坑(改相关代码前先看)
 
 **SSH 后端**
 
@@ -123,6 +121,7 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 - 环境变量里带 `~` 不会被 Python 展开,`cppext` 对 `KLAB_TK_ROOT` 做了 `expanduser`。
 - 5090home 直连不了 github:凡是要 `git clone` 的东西,在 Mac 上克隆进仓库(gitignore)随 rsync 同步。ThunderKittens 就是这么处理的。
 - ncu 的 `-k regex:` 参数必须 `shlex.quote`,正则里的 `|` 会被远端 shell 当管道。
+- Mac 的 openrsync 删不掉远端的非空目录,`--delete` 会刷 `cannot delete non-empty directory`。本地删了目录后,远端要手动 `klab exec "rm -rf ..."` 清一次。
 
 **Modal 后端**
 
@@ -132,41 +131,33 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 - 镜像按工具链分(`klab-<工具链>` app),CLI 通过 `KLAB_TOOLCHAIN` 环境变量告诉 `ModalTarget` 用哪个;忘了设会拿 triton 镜像去跑别的工具链。
 - 编译缓存挂 Volume `klab-cache` 到 `/root/.cache`,否则 cuda / tk 每次冷启动重编一分钟。
 
-**工具链**
+**架构与工具链**
 
-- 5090 是 sm_120:没有 wgmma / tcgen05 / cluster,共享内存上限 101376 字节。`ARCH_FEATURES` 表按 major 版本给特性,cc 数字不是超集关系。
-- TileLang 0.1.14 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`,写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。
+- 5090 是 sm_120:没有 wgmma / tcgen05 / cluster,共享内存上限 101376 字节,170 个 SM。`ARCH_FEATURES` 按 major 版本给特性,**cc 数字不是超集关系**。
+- 5090 是消费卡,持续满载的大 GEMM(如 8192³)会降频,bench 的 p10 可能只有中位数的一半。这一档的绝对值不可比,只能和同时段的 torch 比。
+- TileLang 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`。写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。
 - ThunderKittens:sm_90 起要 `compute_XXa` 架构目标;宏 `KITTENS_SM<xx>` 只能定义一个;`gl` 的编译期维度要传 `nullptr`,用 `make_gl<GL>(ptr, b, d, r, c)` 省事;`warpid()` 在 `kittens::` 命名空间。
 - torch 扩展里用 `getCurrentCUDAStream` 要 `#include <ATen/cuda/CUDAContext.h>`。
+- Triton 3.8 的编译缓存是 `JITFunction.device_caches`(旧版叫 `cache`),device → tuple → dict 嵌套,层级各版本不同;`ptxdump._walk()` 按容器递归找叶子,不写死结构。
+- PTX 里出现 `stmatrix` 不代表用上了 Hopper:它 sm_90 起就有,5090 照样发。判定只认标志指令(`mma.sync` / `cp.async` / `wgmma` / `cp.async.bulk` / `tcgen05`)。
+
+**数值**
+
+- bf16 matmul 的 torch 参考:PyTorch 的 `allow_bf16_reduced_precision_reduction` 默认 True,块数喂不满 GPU 时 cuBLAS 走 split-K 并用 bf16 归约部分和,给接近 0 的输出带来约 0.1 的绝对误差,check 会误判成算子写错。`spec.py` 里关掉它;实测对速度的影响在 ±1% 噪声内。判断方法:拿 `a.float() @ b.float()` 当真值,看是算子离得远还是 torch 离得远。
+
+**NCU / 报告**
+
 - 5090 上 ncu 报带宽用 `Tbyte/s`,H100 用 `Gbyte/s`,`kreport._gbps()` 统一。
 - ncu 对超出默认 carveout 的动态共享内存,`launch__occupancy_limit_shared_mem` 报 0,不能当限制因子。
 
-## 八、未接入的平台怎么接
+**面板**
 
-**租用机(vast / runpod / autodl)**:`~/.ssh/config` 里已有别名。`targets.toml` 加一段 `kind = "ssh"`,填 `host`、`root`、`cuda_bin`(看机器上 CUDA 装在哪),再 `klab setup --toolchain triton` → `klab probe` → `vector_add` 三步。可能遇到:没有 `rsync`(apt 装)、容器里 ncu 没权限(需要 `--cap-add=SYS_ADMIN` 或 `ncu_clock_control = "none"`)、非 root 用户 `~/.local/bin` 不在 PATH(已处理)。不需要改代码;若某台机器连不上 github,照 TK 的做法在 Mac 克隆。
+- CSS 里给 `.sheet` 设了 `display:flex` 会盖掉 `[hidden]` 的默认 `display:none`,遮罩会常驻在最上层。`app.css` 顶部的 `[hidden] { display:none !important }` 兜着。
 
-**Modal 换卡型**:复制 `modal-h100` 段,改 `gpu = "B200"` 与峰值;镜像自动复用。B200 是 sm_100,`ARCH_FEATURES` 已有该行。
+## 七、版本策略
 
-**昇腾(910B 等)**:需要租机后实测,预计改三处,Target 层不动:
+`envs/*/requirements.txt` 故意不钉版本:torch 取 PyTorch 官方 cu130 索引的最新版,triton 随 torch,tilelang / nvidia-cutlass-dsl 取 PyPI 最新。`klab setup` 会打印实际装到的版本。某次升级把哪条工具链弄坏了,就在对应 `requirements.txt` 里钉住上一个可用版本并在注释里写日期与原因;Modal 镜像会随 requirements 变化自动重建。
 
-1. `toolchains/ascend.py`:CANN 环境 + triton-ascend(或 Ascend C 的编译方式),`envs/ascend/` 放依赖。
-2. `harness/runner.py`:设备探测从 `torch.cuda` 改成按后端选 `torch_npu`;`ARCH_FEATURES` 加 Ascend 一行(cube / vector 单元);`device_info()` 字段照旧。
-3. profiler 适配:`klab ncu` 对昇腾后端改调 `msprof`,`kreport.py` 加一个从 msprof 输出到体检单字段的映射;体检单模板不变,采不到的字段显示 `-`。
+面板的 Monaco 版本钉在 `klab/web.py` 的 `MONACO_VERSION`。
 
-## 八点五、版本策略
-
-`envs/*/requirements.txt` 故意不钉版本:torch 取 PyTorch 官方 cu130 索引的最新版,triton 随 torch,tilelang / nvidia-cutlass-dsl 取 PyPI 最新。`klab setup` 会打印实际装到的版本。某次升级把哪条工具链弄坏了,就在对应 `requirements.txt` 里钉住上一个可用版本并在注释里写日期与原因;Modal 镜像会随 requirements 变化自动重建。2026-09-18 的可用组合:torch 2.14.0+cu130、triton 3.8.0、tilelang 0.1.14、nvidia-cutlass-dsl 4.7.1、ThunderKittens main(2026-09-12)。
-
-## 九、维护规矩
-
-- **README 面向使用,本手册面向维护**:README 讲命令怎么用、算子怎么写;本手册讲为什么这么设计、改哪里、怎么验证、踩过什么坑。同一件事只在一处完整解释,另一处链接。
-- 加后端、加工具链、改契约,三件事必须同步:代码、README 对应节、`tests/`;改了 agent 的操作流程还要同步 playbook。
-- `targets.toml` 的 `peak_*` 是手填的:`peak_gbps` 取公开规格,`peak_tflops_fp16` 取 `klab probe` 实测,注释里写日期。
-- 决策记录只写「定了什么、谁定的、哪天」,不写论证:
-  - 2026-09-18 用户:单独仓库,与 interviewprep 并排;先跑通 Triton。
-  - 2026-09-18 用户:Modal 直连优先,不通再走 127.0.0.1:3213。
-  - 2026-09-18 用户:NCU 是核心,不做 nsys;要固定模板的体检单。
-  - 2026-09-18 用户:`--target auto` 先不做。
-  - 2026-09-18 用户:租用机、昇腾等租到后再单独接入。
-  - 2026-09-18 用户:要最纯粹的写 kernel 环境,`kernels/` 只放用户源码,编译、执行、解读都在别处 → 拆出 `specs/`。
-- 提交信息用中文,写清改了哪一层;`runs/`、`.venv/`、`envs/tk/ThunderKittens/` 不进 git。
+已验证可用的组合:torch 2.14.0+cu130、triton 3.8.0、tilelang 0.1.14、nvidia-cutlass-dsl 4.7.1、ThunderKittens main、monaco-editor 0.56.0。

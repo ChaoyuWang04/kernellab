@@ -19,6 +19,8 @@
 | 输入的形状、dtype、布局约束 | 看 kernel 对形状的假设(整除、对齐、是否要求连续、B 是 (k,n) 还是 (n,k)) |
 | 数学上等价的 torch 写法 | 这是 `reference()`,也是「相对 torch」标尺的来源;选最贴近的库调用(`torch.matmul`、`torch.softmax`、`F.layer_norm`…),**用与算子相同的 dtype 直接调**,不要先 `.float()`:那会多一次拷贝、把 GEMM 变成 fp32,标尺就虚高(matmul 曾因此显示 11× 快于 torch,修正后是 0.9×) |
 
+> bf16 matmul 的参考还有一个坑:PyTorch 的 `allow_bf16_reduced_precision_reduction` 默认 True,块数喂不满 GPU 时(如 1000×999×777 只有 64 块、5090 有 170 个 SM)cuBLAS 走 split-K 并用 bf16 归约部分和,给**接近 0 的输出**带来约 0.1 的绝对误差,check 会误判成用户算子写错。在 `spec.py` 里 `torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False` 关掉;实测对速度的影响在 ±1% 噪声内,标尺不受影响。判断方法:拿 `a.float() @ b.float()` 当真值,看是算子离得远还是 torch 离得远。
+
 **生成 `specs/<名>/meta.toml`**(直接抄 `specs/softmax/meta.toml` 或 `specs/matmul/meta.toml` 改):
 
 - `toolchain`:上表的结果。
@@ -68,6 +70,7 @@ uv run klab run <名> --target modal-h100   # 换后端,其余不变
 1. **`runs/<id>/report.md`(体检单)**,先读「判定」,再读判定对应的那一段。
 2. **`klab compare <名>`**:同一算子在其他后端、或仓库里同一数学的其他实现(`matmul` / `matmul_tl` / `matmul_cute`)的数字。
 3. **用户源码**:把指标对回代码。寄存器数对应累加器和分块常量;共享内存对应 `BLOCK_*` 与 stages;stall 原因对应访存与同步的写法。
+4. **`klab ptx <名>`**(用户在练某一代的特性时必看):确认 kernel 真的降到了那一代的标志指令。体检单答不了这个 —— 它只说 Tensor pipe 用了多少,不说走的是 `mma.sync` 还是 `wgmma`。命中世代与目标架构不符时,先怀疑 DSL 降级(Triton 在 sm_120 上没有 wgmma,退回 mma.sync)或算子根本没走 tensor core(`tl.dot` / `T.gemm` 写法不对)。
 
 指标 → 常见原因 → 改法(体检单各段的读法):
 
