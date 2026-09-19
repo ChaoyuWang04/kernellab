@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>kernellab</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">kernellab</div>
+  <button class="ghost" id="problem-menu">☰ 题目列表</button>
+  <div class="spacer"></div>
+  <button class="ghost run" id="b-run" title="只跑正确性,几秒 (⌘↵)">▶ Run</button>
+  <button class="submit" id="b-submit" title="check → bench → ncu → 体检单,约一分钟 (⌘⇧↵)">⬆ Submit</button>
+  <div class="spacer"></div>
+  <label class="sel"><span>后端</span><select id="target"></select></label>
+  <span class="repo" id="repo"></span>
+</header>
+
+<main id="main">
+  <!-- 左:题面 / 讲解 / 其他实现 / 提交 / 结果 -->
+  <section class="panel" id="left">
+    <nav class="tabs" id="left-tabs">
+      <button data-tab="desc" class="on">📄 题目</button>
+      <button data-tab="editorial">📖 优化路线</button>
+      <button data-tab="solutions">🧪 其他实现</button>
+      <button data-tab="subs">🕘 提交记录</button>
+      <button data-tab="result">📊 结果</button>
+    </nav>
+    <div class="body">
+      <div class="tabpane on" id="pane-desc"></div>
+      <div class="tabpane" id="pane-editorial"></div>
+      <div class="tabpane" id="pane-solutions"></div>
+      <div class="tabpane" id="pane-subs"></div>
+      <div class="tabpane" id="pane-result"></div>
+    </div>
+  </section>
+
+  <div class="gutter" id="gutter-x"></div>
+
+  <!-- 右:编辑器 + 控制台 -->
+  <div class="rightcol" id="right">
+    <section class="panel" id="editor-panel">
+      <div class="phead">
+        <span class="ptitle">&lt;/&gt; Code</span>
+        <label class="sel"><select id="impl"></select></label>
+        <span class="path" id="srcpath"></span>
+        <div class="spacer"></div>
+        <button class="ghost tiny" id="b-reset" title="恢复成这道题该语言的骨架">↺ 重置</button>
+        <span class="saved" id="saved"></span>
+      </div>
+      <div id="editor"></div>
+    </section>
+
+    <div class="gutter h" id="gutter-y"></div>
+
+    <section class="panel" id="console-panel">
+      <div class="phead">
+        <span class="ptitle">测试用例</span>
+        <div class="cases" id="cases"></div>
+        <div class="spacer"></div>
+        <span class="verdict" id="verdict"></span>
+      </div>
+      <pre class="log" id="log">选一道题,写算子,按 Run 看对不对(⌘↵),按 Submit 出体检单(⌘⇧↵)。</pre>
+    </section>
+  </div>
+</main>
+
+<div class="sheet" id="sheet" hidden><div class="sheetbox" id="sheetbox"></div></div>
+
+<script src="/static/vendor/monaco/vs/loader.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

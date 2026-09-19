@@ -56,6 +56,7 @@ class KernelSpec:
     dir: Path            # specs/<名>
     kernel_dir: Path     # kernels/<名>
     name: str
+    problem: str         # 同一道题的不同语言实现共用一个 problem(题面在 problems/<problem>/);不写就是算子名自己
     toolchain: str
     kernel_regex: str
     min_cc: float
@@ -75,6 +76,7 @@ class KernelSpec:
             dir=spec_dir,
             kernel_dir=kernel_dir_of(spec_dir),
             name=meta.get("name", spec_dir.name),
+            problem=meta.get("problem", meta.get("name", spec_dir.name)),
             toolchain=meta["toolchain"],
             kernel_regex=meta.get("kernel_regex", ""),
             min_cc=float(req.get("min_cc", 0)),

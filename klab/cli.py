@@ -13,6 +13,7 @@
     klab compare [算子...] [-t 后端]     跨算子 / 跨后端的 bench 对比表
     klab sweep  <kernel_dir> --target T          按 meta.toml [sweep] 扫参
     klab baseline <kernel_dir> --target T        把最新 bench 钉成基线,之后 bench 自动报差
+    klab web    [--port 8777]          本地面板(算子版 LeetCode):左题面右编辑器,Run / Submit
     klab sh     --target T             进后端 shell
     klab exec   "<shell>" --target T   在后端执行一段命令(诊断)
 """
@@ -443,6 +444,17 @@ def exec_cmd(script: str, target: Optional[str] = TargetOpt):
     tgt.sync(root)
     proc = tgt.run(script, check=False)
     raise typer.Exit(proc.returncode)
+
+
+@app.command()
+def web(
+    port: int = typer.Option(8777, help="监听端口,只绑 127.0.0.1"),
+    no_open: bool = typer.Option(False, "--no-open", help="不自动打开浏览器"),
+):
+    """本地面板(算子版 LeetCode):左边题面与优化路线,右边写算子;Run 看对不对,Submit 出体检单。"""
+    from klab.web import serve
+
+    serve(repo_root(), port=port, open_browser=not no_open)
 
 
 @app.command()

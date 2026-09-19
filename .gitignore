@@ -5,3 +5,4 @@ runs/*
 !runs/.gitkeep
 .klab-cache/
 envs/tk/ThunderKittens/
+klab/webui/vendor/

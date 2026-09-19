@@ -1,0 +1,112 @@
+/* 浅色主题,对标 LeetCode 的排版语言:白面板 + 圆角 + 细边框 + 灰底页面 */
+:root {
+  --page:#f0f0f0; --panel:#fff; --line:#e5e6e8; --fg:#262626; --dim:#6b6f76; --faint:#9aa0a6;
+  --green:#2db55d; --green-d:#249c4e; --blue:#1a7ff0; --red:#e02f2f; --amber:#d98500;
+  --chip:#f4f5f6; --hover:#eef0f2;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --head:48px;
+}
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }   /* 下面 .sheet 的 display:flex 会盖掉 [hidden] 的默认值 */
+html, body { height:100%; }
+body { margin:0; background:var(--page); color:var(--fg);
+       font:14px/1.65 -apple-system, "PingFang SC", "Helvetica Neue", system-ui, sans-serif; overflow:hidden; }
+
+/* ---------- 顶栏 ---------- */
+header { height:var(--head); display:flex; align-items:center; gap:10px; padding:0 14px;
+         background:var(--panel); border-bottom:1px solid var(--line); }
+.brand { font-weight:700; letter-spacing:.3px; }
+.spacer { flex:1; }
+.repo { color:var(--faint); font:11px var(--mono); max-width:280px; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap; }
+
+button { font:inherit; cursor:pointer; border-radius:7px; border:1px solid transparent; padding:6px 12px; }
+button:disabled { opacity:.45; cursor:not-allowed; }
+.ghost { background:var(--chip); color:var(--fg); }
+.ghost:hover:not(:disabled) { background:var(--hover); }
+.ghost.run { color:var(--green-d); font-weight:600; }
+.tiny { padding:3px 9px; font-size:12px; }
+.submit { background:var(--green); color:#fff; font-weight:600; }
+.submit:hover:not(:disabled) { background:var(--green-d); }
+
+.sel { display:inline-flex; align-items:center; gap:6px; color:var(--dim); font-size:12px; }
+select { font:inherit; font-size:13px; padding:5px 8px; border:1px solid var(--line);
+         border-radius:7px; background:var(--panel); color:var(--fg); }
+
+/* ---------- 布局 ---------- */
+main { height:calc(100% - var(--head)); display:flex; padding:8px; gap:0; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:9px;
+         display:flex; flex-direction:column; overflow:hidden; min-height:0; min-width:0; }
+#left { width:44%; }
+.rightcol { flex:1; display:flex; flex-direction:column; min-width:0; }
+#editor-panel { flex:1; min-height:120px; }
+#console-panel { height:32%; min-height:90px; }
+.gutter { width:8px; cursor:col-resize; flex:none; }
+.gutter.h { width:auto; height:8px; cursor:row-resize; }
+.gutter:hover { background:#dfe1e4; border-radius:4px; }
+
+/* ---------- 左侧 tab ---------- */
+.tabs { display:flex; gap:2px; padding:4px 6px; border-bottom:1px solid var(--line); flex:none; overflow-x:auto; }
+.tabs button { background:none; color:var(--dim); padding:5px 10px; font-size:13px; white-space:nowrap; }
+.tabs button:hover { background:var(--chip); }
+.tabs button.on { color:var(--fg); font-weight:600; background:var(--chip); }
+.body { flex:1; overflow:auto; min-height:0; }
+.tabpane { display:none; padding:20px 24px; }
+.tabpane.on { display:block; }
+
+/* ---------- 面板头 ---------- */
+.phead { display:flex; align-items:center; gap:10px; padding:6px 10px;
+         border-bottom:1px solid var(--line); flex:none; min-height:38px; }
+.ptitle { font-size:13px; font-weight:600; color:var(--dim); }
+.path { font:11px var(--mono); color:var(--faint); }
+.saved { font-size:11px; color:var(--faint); }
+.verdict { font-size:13px; font-weight:600; }
+.verdict.ok { color:var(--green-d); }
+.verdict.bad { color:var(--red); }
+.verdict.busy { color:var(--amber); }
+
+.cases { display:flex; gap:5px; flex-wrap:wrap; }
+.case { font:11px var(--mono); padding:3px 9px; border-radius:20px; border:1px solid var(--line);
+        background:var(--panel); color:var(--dim); cursor:pointer; user-select:none; }
+.case.on { background:#e8f3ff; border-color:#b8daff; color:#0b64cf; }
+
+#editor { flex:1; min-height:0; }
+.log { flex:1; margin:0; padding:10px 14px; overflow:auto; background:#fbfbfc; color:#33373d;
+       font:12px/1.5 var(--mono); white-space:pre; min-height:0; }
+
+/* ---------- 正文排版(题面 / 体检单共用) ---------- */
+.tabpane h1 { font-size:21px; margin:0 0 14px; }
+.tabpane h2 { font-size:17px; margin:26px 0 8px; }
+.tabpane h3 { font-size:14px; margin:20px 0 6px; color:var(--dim);
+              text-transform:uppercase; letter-spacing:.6px; }
+.tabpane p { margin:10px 0; }
+.tabpane ul, .tabpane ol { padding-left:22px; margin:10px 0; }
+.tabpane li { margin:5px 0; }
+.tabpane code { background:var(--chip); padding:1.5px 5px; border-radius:4px; font:12.5px var(--mono); }
+.tabpane pre.code { background:#f7f8f9; border:1px solid var(--line); border-radius:8px;
+                    padding:12px 14px; overflow:auto; font:12.5px/1.5 var(--mono); }
+.tabpane pre.code code { background:none; padding:0; }
+.tabpane table { border-collapse:collapse; width:100%; margin:12px 0 18px; font-size:13px; }
+.tabpane th { text-align:left; color:var(--dim); font-weight:600; font-size:12px;
+              border-bottom:1px solid var(--line); padding:7px 10px; background:#fafbfc; }
+.tabpane td { border-bottom:1px solid #f0f1f3; padding:7px 10px; vertical-align:top; }
+.tabpane tr:hover td { background:#fafbfc; }
+.empty { color:var(--faint); font-style:italic; }
+
+/* ---------- 列表(其他实现 / 提交记录) ---------- */
+.row { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line);
+       border-radius:8px; margin-bottom:8px; cursor:pointer; }
+.row:hover { background:#fafbfc; border-color:#d6d8dc; }
+.row .k { font:12.5px var(--mono); }
+.row .m { color:var(--faint); font-size:12px; }
+.row .n { margin-left:auto; font:12px var(--mono); color:var(--dim); text-align:right; }
+.badge { font-size:11px; padding:2px 8px; border-radius:20px; background:var(--chip); color:var(--dim); }
+.badge.ok { background:#e6f7ec; color:var(--green-d); }
+.badge.bad { background:#fdecec; color:var(--red); }
+.badge.cur { background:#e8f3ff; color:#0b64cf; }
+
+/* ---------- 题目列表浮层 ---------- */
+.sheet { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex;
+         align-items:flex-start; justify-content:center; padding-top:70px; z-index:50; }
+.sheetbox { background:var(--panel); border-radius:10px; width:min(560px, 92vw);
+            max-height:70vh; overflow:auto; padding:14px; box-shadow:0 12px 40px rgba(0,0,0,.18); }
