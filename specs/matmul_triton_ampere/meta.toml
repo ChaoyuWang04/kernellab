@@ -1,0 +1,39 @@
+name = "matmul_triton_ampere"
+problem = "matmul"          # 题面与优化路线在 problems/matmul/;同一道题的其他语言实现共用这个键
+toolchain = "triton"
+kernel_regex = "matmul_kernel"
+
+# Ampere 这一档要的就是 mma.sync + cp.async,sm_80 起都有;写出来是为了自我说明,不是为了拦谁。
+# 真正的 Ampere 数据中心卡(A100)目前没有登记在 targets.toml,见对话记录。
+[requires]
+min_cc = 8.0
+features = ["mma_sync", "async_copy"]
+
+# bf16 输出的舍入误差与结果量级成正比(bf16 只有 8 位尾数,ulp ≈ 0.4%),所以靠 rtol 兜;
+# atol 管接近 0 的位置(那里的误差来自 fp32 累加顺序,很小)。
+[tolerance]
+atol = 1e-1
+rtol = 1e-2
+
+# 第一个 case 是 klab ncu 默认抓的那个,取中等规模
+[[cases]]
+name = "4096-bf16"
+m = 4096
+n = 4096
+k = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "8192-bf16"
+m = 8192
+n = 8192
+k = 8192
+dtype = "bfloat16"
+
+# 非整数倍形状,专门验证 kernel 里的边界 mask(原 kernel.py 的 check(1000, 999, 777))
+[[cases]]
+name = "1000x999x777-bf16"
+m = 1000
+n = 999
+k = 777
+dtype = "bfloat16"
