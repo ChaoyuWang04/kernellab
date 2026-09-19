@@ -92,7 +92,13 @@ function initEditor() {
   });
 }
 
-const code = () => editor ? editor.getValue() : ($('editor').querySelector('textarea') || {}).value || '';
+/* 拿编辑器里的代码。拿不到时返回 null 而不是空串 —— 空串会被当成「用户清空了文件」写回磁盘,
+   等于一次静默的数据丢失。调用方见到 null 就别保存。 */
+function code() {
+  if (editor) return editor.getValue();
+  const ta = $('editor').querySelector('textarea');
+  return ta ? ta.value : null;
+}
 
 function setCode(text, language) {
   if (editor) {
@@ -155,7 +161,7 @@ async function selectImpl(name) {
   setCode(s.code, s.language);
   $('srcpath').textContent = s.path;
   $('saved').textContent = '已保存';
-  impl.template = s.template;
+  impl.backbone = s.backbone;
   $('cases').innerHTML = impl.cases.map((c, i) =>
     `<span class="case ${i === 0 ? 'on' : ''}" data-case="${esc(c)}">${esc(c)}</span>`).join('');
   $('cases').querySelectorAll('[data-case]').forEach(el =>
@@ -166,8 +172,10 @@ const chosenCases = () => [...$('cases').querySelectorAll('.case.on')].map(el =>
 
 async function save() {
   if (!impl || !impl.ready) return;
+  const c = code();
+  if (c === null) { $('saved').textContent = '编辑器没就绪,没保存'; return; }
   const r = await api('/api/save', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                                    body: JSON.stringify({kernel: impl.name, code: code()})});
+                                    body: JSON.stringify({kernel: impl.name, code: c})});
   $('saved').textContent = r.ok ? '已保存' : '保存失败:' + r.data.error;
 }
 
@@ -180,6 +188,8 @@ function setBusy(v) {
 
 async function go(mode) {
   if (busy || !impl || !impl.ready) return;
+  const c = code();
+  if (c === null) { alert('编辑器还没就绪,稍等一下再试'); return; }
   setBusy(true);
   $('verdict').textContent = mode === 'check' ? '运行中…' : '判题中…';
   $('verdict').className = 'verdict busy';
@@ -189,7 +199,7 @@ async function go(mode) {
     const res = await fetch('/api/run', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({kernel: impl.name, target: $('target').value, mode,
-                            cases: chosenCases(), code: code()}),
+                            cases: chosenCases(), code: c}),
     });
     $('saved').textContent = '已保存';
     if (!res.ok) {
@@ -241,17 +251,34 @@ async function showReport(run, jump) {
   if (jump) showTab('result');
 }
 
-function renderSolutions() {
+async function renderSolutions() {
   const p = S.problems.find(p => p.name === problem);
+  const langs = p.impls.map(k => `<option value="${esc(k.name)}" ${k.name === impl.name ? 'selected' : ''}
+      ${k.ready ? '' : 'disabled'}>${esc(k.toolchain)}</option>`).join('');
+  const r = await api('/api/solutions?kernel=' + encodeURIComponent(impl.name));
+  const sols = r.ok ? r.data.solutions : [];
   $('pane-solutions').innerHTML =
-    `<h2>同一道题的其他实现</h2><p>同样的数学、同样的 case 与容差,换一种 DSL 重写一遍,数字可以直接横着比。</p>`
-    + p.impls.map(k => `<div class="row" data-impl="${esc(k.name)}">
-         <span class="k">${esc(k.toolchain)}</span>
-         <span class="badge ${k.name === impl.name ? 'cur' : ''}">${esc(k.name)}</span>
-         <span class="m">${k.ready ? esc(k.features.join(', ') || '无特性门禁') : esc(k.note)}</span>
-       </div>`).join('');
-  $('pane-solutions').querySelectorAll('[data-impl]').forEach(el =>
-    el.onclick = () => { if (!busy) selectImpl(el.dataset.impl).then(renderSolutions); });
+    `<h2>参考答案</h2>
+     <p>从零到最优的完整晋升路径,每一级只改一处。语言
+       <select id="sol-lang">${langs}</select>
+       —— 同样的数学、同样的 case 与容差,数字可以直接横着比。</p>`
+    + (sols.length ? sols.map(s => `
+        <div class="sol">
+          <div class="row" data-sol="${esc(s.id)}">
+            <span class="badge cur">${esc(s.id.split('-')[0])}</span>
+            <span class="k">${esc(s.title)}</span>
+            <span class="n">载入编辑器 →</span>
+          </div>
+          <pre class="note">${esc(s.note)}</pre>
+        </div>`).join('')
+       : `<p class="empty">这一语言还没有写参考答案(放在 problems/${esc(problem)}/solutions/&lt;工具链&gt;/)。</p>`);
+  const sel = $('sol-lang');
+  if (sel) sel.onchange = () => { if (!busy) selectImpl(sel.value).then(renderSolutions); };
+  $('pane-solutions').querySelectorAll('[data-sol]').forEach(el => el.onclick = () => {
+    if (busy) return;
+    const s = sols.find(x => x.id === el.dataset.sol);
+    if (s && confirm(`把「${s.title}」载入编辑器?当前代码会被覆盖。`)) { setCode(s.code, impl.language); save(); }
+  });
 }
 
 function renderSubs() {
@@ -326,8 +353,8 @@ $('b-run').onclick = () => go('check');
 $('b-submit').onclick = () => go('run');
 $('impl').onchange = () => selectImpl($('impl').value).then(renderSolutions);
 $('b-reset').onclick = () => {
-  if (busy || !impl || !impl.template) return alert('这道题的 ' + (impl ? impl.toolchain : '') + ' 还没有骨架模板');
-  if (confirm('用骨架覆盖当前代码?')) setCode(impl.template, impl.language);
+  if (busy || !impl || !impl.backbone) return alert('这道题的 ' + (impl ? impl.toolchain : '') + ' 还没有骨架');
+  if (confirm('用骨架覆盖当前代码?函数体会清空,从头写。')) { setCode(impl.backbone, impl.language); save(); }
 };
 window.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); go(e.shiftKey ? 'run' : 'check'); }

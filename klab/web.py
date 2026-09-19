@@ -250,10 +250,34 @@ def state(root: Path) -> dict:
     }
 
 
-def template_for(root: Path, problem: str, toolchain: str) -> str:
+def backbone_for(root: Path, problem: str, toolchain: str) -> str:
+    """骨架:契约(常量 + 函数签名)给全,函数体留空。面板的「重置」恢复到它。"""
     _, fname = TOOLCHAIN_LANG.get(toolchain, ("python", "kernel.py"))
-    t = root / "problems" / problem / "templates" / f"{toolchain}{Path(fname).suffix}"
+    t = root / "problems" / problem / "backbone" / f"{toolchain}{Path(fname).suffix}"
     return t.read_text() if t.is_file() else ""
+
+
+def solutions_for(root: Path, problem: str, toolchain: str) -> list[dict]:
+    """参考答案阶梯:problems/<题>/solutions/<工具链>/<序号>-<名字>.<后缀>。
+
+    文件名的序号决定顺序;模块 docstring 的第一行是标题,其余是说明。
+    """
+    d = root / "problems" / problem / "solutions" / toolchain
+    if not d.is_dir():
+        return []
+    out = []
+    for f in sorted(d.iterdir()):
+        if not f.is_file() or f.suffix not in (".py", ".cu"):
+            continue
+        code = f.read_text()
+        title, note = f.stem, ""
+        m = re.match(r'\s*"""(.*?)"""', code, re.S)
+        if m:
+            doc = m.group(1).strip().splitlines()
+            title = doc[0].strip() or f.stem
+            note = "\n".join(doc[1:]).strip()
+        out.append({"id": f.stem, "title": title, "note": note, "code": code})
+    return out
 
 
 # ---------------------------------------------------------------- 跑子进程
@@ -401,7 +425,13 @@ class Handler(BaseHTTPRequestHandler):
             src = primary_source(self.root, k["name"], k["toolchain"])
             return self._json({"kernel": k["name"], "path": f"kernels/{k['name']}/{src.name}",
                                "language": k["language"], "code": src.read_text(),
-                               "template": template_for(self.root, k["problem"], k["toolchain"])})
+                               "backbone": backbone_for(self.root, k["problem"], k["toolchain"])})
+        if path == "/api/solutions":
+            k = self._kernel(q.get("kernel", [""])[0])
+            if not k:
+                return self._json({"error": "未知或没接线的算子"}, 404)
+            return self._json({"toolchain": k["toolchain"], "language": k["language"],
+                               "solutions": solutions_for(self.root, k["problem"], k["toolchain"])})
         if path == "/api/report":
             rid = q.get("run", [""])[0]
             md = self.root / "runs" / rid / "report.md"

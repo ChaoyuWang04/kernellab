@@ -1,11 +1,16 @@
-"""Triton 矩阵乘骨架。C[M,N] = A[M,K] @ B[K,N],bf16 进、fp32 累加、bf16 出。
+"""朴素分块 —— 基线
 
-只写 kernel 本体与 tile 常量:分配输出、算 grid、传 stride 都由系统做。
+一个 CTA 负责 C 的一块 BLOCK_M × BLOCK_N,沿 K 一段一段累加,pid 按行铺。
+没有 autotune、没有 program 重排、没有 split-K。后面每一级只在这份上改一处。
+
+5090 实测 4096³:0.95× torch,205.2 TFLOPS(89% 可达算力)。
+判定「卡在算上」,tensor core 85% —— 已经是好状态。
+体检单另外指出两处:warp 位置只用了 16%(卡在寄存器),尾波浪费约 25%。
+下面两级就分别去动这两处,看看动了有没有用。
 """
 
 import triton
 import triton.language as tl
-
 
 # 启动参数。接线读这几个常量去算 grid 并启动,你只管调它们。
 BLOCK_M = 128
@@ -26,9 +31,12 @@ def matmul_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
 ):
-    # ① 我是谁:从 grid 坐标推出我负责 C 的哪一块
-    pid_m = tl.program_id(axis=0)        # 第几个行块
-    pid_n = tl.program_id(axis=1)        # 第几个列块
+    # ① 我是谁:grid 是一维的,自己把 pid 换算成「第几个行块、第几个列块」
+    #    这里按行铺,最直白;想提高 L2 命中就改这几行(优化路线第 6 级)
+    pid = tl.program_id(axis=0)
+    num_pid_n = tl.cdiv(N, BLOCK_N)
+    pid_m = pid // num_pid_n
+    pid_n = pid % num_pid_n
 
     # ② 我这块覆盖的行号、列号(各是一个一维向量)
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)   # [BLOCK_M]

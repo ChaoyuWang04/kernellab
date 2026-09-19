@@ -27,20 +27,31 @@ def make_inputs(case, device):
     return {"a": a, "b": b}
 
 
+def _constexprs():
+    """kernel 签名里所有全大写的编译期参数,从用户模块的同名常量取值。
+
+    这样加一个新旋钮(比如 swizzle 的 GROUP_M)只需要在 kernel.py 里声明参数 + 定义常量,
+    launcher 不用跟着改 —— 「每一级只改 kernel」这条才站得住。
+    """
+    names = getattr(k.matmul_kernel, "arg_names", [])
+    return {n: getattr(k, n) for n in names if n.isupper() and hasattr(k, n)}
+
+
 def run(a, b):
     """launcher:分配输出、按用户的 tile 常量算 grid、把 stride 传进去。"""
     assert a.shape[1] == b.shape[0], f"K 不匹配:{tuple(a.shape)} @ {tuple(b.shape)}"
     M, K = a.shape
     N = b.shape[1]
     c = torch.empty((M, N), device=a.device, dtype=a.dtype)
-    grid = (triton.cdiv(M, k.BLOCK_M), triton.cdiv(N, k.BLOCK_N))
+    # 一维 grid:pid -> 哪一块 C 由 kernel 自己决定(按行铺 / swizzle 分组铺都只改 kernel)
+    grid = (triton.cdiv(M, k.BLOCK_M) * triton.cdiv(N, k.BLOCK_N),)
     k.matmul_kernel[grid](
         a, b, c,
         M, N, K,
         a.stride(0), a.stride(1),
         b.stride(0), b.stride(1),
         c.stride(0), c.stride(1),
-        BLOCK_M=k.BLOCK_M, BLOCK_N=k.BLOCK_N, BLOCK_K=k.BLOCK_K,
+        **_constexprs(),
         num_warps=k.NUM_WARPS,
         num_stages=k.NUM_STAGES,
     )

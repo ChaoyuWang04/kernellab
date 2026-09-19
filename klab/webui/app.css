@@ -110,3 +110,11 @@ main { height:calc(100% - var(--head)); display:flex; padding:8px; gap:0; }
          align-items:flex-start; justify-content:center; padding-top:70px; z-index:50; }
 .sheetbox { background:var(--panel); border-radius:10px; width:min(560px, 92vw);
             max-height:70vh; overflow:auto; padding:14px; box-shadow:0 12px 40px rgba(0,0,0,.18); }
+
+/* ---------- 参考答案 ---------- */
+.sol { margin-bottom: 14px; }
+.sol .row { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.sol .note { margin: 0; padding: 10px 14px; border: 1px solid var(--line); border-top: 0;
+             border-radius: 0 0 8px 8px; background: #fafbfc; color: var(--dim);
+             font: 12.5px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif;
+             white-space: pre-wrap; }

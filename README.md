@@ -54,7 +54,7 @@ uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 
 |---|---|
 | 左 · 题目 | `problems/<题>/problem.md`:数学定义、输入约束、评判标准、测试用例 |
 | 左 · 优化路线 | `problems/<题>/editorial.md`:一级一级的优化阶梯,每级标注对应体检单的哪个指标 |
-| 左 · 其他实现 | 同一道题的其他语言实现,点一下就切过去 |
+| 左 · 参考答案 | 从零到最优的完整晋升路径,每级一份代码 + 实测结论;可切语言,点一下载入编辑器 |
 | 左 · 提交记录 | 历次提交的判定与数字;点开看**当次提交的源码快照** |
 | 左 · 结果 | 体检单。Submit 完自动切到这里 |
 | 右 · 编辑器 | Monaco(VSCode 同款内核),Python / CUDA 高亮 + 算子 API 片段补全 |
@@ -67,7 +67,7 @@ uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 
 | ▶ Run | `klab check`,只看对不对 | 几秒 | ⌘↵ |
 | ⬆ Submit | `klab run`:check → bench → ncu → 体检单 | 约一分钟 | ⌘⇧↵ |
 
-编辑器里的代码停手约 1 秒自动存回 `kernels/<名>/kernel.py`(git 照常管它);每次运行另存一份源码快照到 `runs/<id>/submission/`,所以「这个 204 TFLOPS 对应哪份代码」永远查得到。「↺ 重置」用 `problems/<题>/templates/<工具链>.py` 的骨架覆盖当前代码。
+编辑器里的代码停手约 1 秒自动存回 `kernels/<名>/kernel.py`(git 照常管它);每次运行另存一份源码快照到 `runs/<id>/submission/`,所以「这个 204 TFLOPS 对应哪份代码」永远查得到。「↺ 重置」恢复成 `problems/<题>/backbone/<工具链>.py`:**契约(启动常量 + 函数签名)给全,函数体留空**,和 LeetCode 给你函数签名是一个意思。
 
 **一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面挂 triton / tilelang / cute / cuda 四个实现,同样的 case 与容差,数字可以直接横着比 —— 右上角下拉切语言,旁边下拉切后端。
 
@@ -100,9 +100,10 @@ specs/<名>/baselines/       klab baseline 钉下的基线
 题面、优化路线与各语言骨架在 `problems/<题>/`,由 `meta.toml` 的 `problem` 键关联:
 
 ```text
-problems/<题>/problem.md              题面:数学定义、输入约束、评判标准
-problems/<题>/editorial.md            优化路线:一级级的优化阶梯,每级标注对应体检单哪个指标
-problems/<题>/templates/<工具链>.py    骨架,面板的「重置」用它
+problems/<题>/problem.md                   题面:数学定义、输入约束、评判标准
+problems/<题>/editorial.md                 优化路线:一级级的优化阶梯,每级标注对应体检单哪个指标
+problems/<题>/backbone/<工具链>.py          骨架:常量与函数签名给全,函数体留空;面板「重置」用它
+problems/<题>/solutions/<工具链>/N-名字.py   参考答案第 N 级;docstring 第一行是标题,其余是说明
 ```
 
 五种工具链的样板算子在 git 历史里(`git show 655f0e3 --stat`),需要时捞出来当参考。

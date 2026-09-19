@@ -19,7 +19,8 @@ Mac 上写 GPU 算子,远端 GPU 上编译、跑、测速、抓 NCU,结果回流
 11. **不为未验证的平台写代码**:没上过机的后端只加 `targets.toml` 配置,不写猜测性的适配器。
 12. **任何改动先 `uv run pytest`**;改了跑 GPU 的部分按第五节上机验证,不能上机就明说没验证。
 13. **改动必须同步**:加后端 / 加工具链 / 改契约 = 代码 + README 对应节 + `tests/`;改了 agent 的操作流程还要同步 playbook。同一件事只在一处完整解释,另一处链接。
-14. 提交信息用中文,写清改了哪一层。`runs/`、`.venv/`、`envs/tk/ThunderKittens/`、`klab/webui/vendor/` 不进 git。
+14. **提交前先看 `git status`**:用户在面板里写算子,`kernels/` 随时可能有他的改动,别用 `git add -A` 一把扫进无关的 commit。
+15. 提交信息用中文,写清改了哪一层。`runs/`、`.venv/`、`envs/tk/ThunderKittens/`、`klab/webui/vendor/` 不进 git。
 
 ## 二、启动
 
@@ -86,7 +87,7 @@ runs/<时间>-<算子>-<后端>-<模式>/
 | `klab/webui/` | 面板前端:`index.html` + `app.css` + `app.js`;`vendor/` 是 Monaco(gitignore) | 无构建,改完刷新即可 |
 | `kernels/<名>/` | 算子源码(`kernel.py` / `kernel.cu` / `_vendor/`) | 面板的编辑器写它;agent 不擅自改 |
 | `specs/<名>/` | 接线:`meta.toml`(含 `problem` 键)+ `spec.py` + `baselines/` | 生成规则见 playbook 第 1 节 |
-| `problems/<题>/` | `problem.md` 题面、`editorial.md` 优化路线、`templates/<工具链>.<后缀>` 骨架 | 靠 `meta.toml` 的 `problem` 键与 `specs/` 关联 |
+| `problems/<题>/` | `problem.md` 题面、`editorial.md` 优化路线、`backbone/<工具链>.<后缀>` 骨架(函数体留空)、`solutions/<工具链>/N-名字.<后缀>` 参考答案阶梯 | 靠 `meta.toml` 的 `problem` 键与 `specs/` 关联;参考答案的结论必须是实测的 |
 | `envs/<工具链>/` | `requirements.txt` + `torch-index.txt`;`envs/tk/ThunderKittens/` 是 Mac 上的克隆,gitignore | 故意不钉版本,见第七节 |
 | `targets.toml` | 后端登记与峰值 | 加后端要同步 `.vscode/tasks.json` 的下拉(tests 守) |
 | `tests/` | 不需要 GPU 的本地测试,夹具是一次真实的 5090 NCU 运行 | |

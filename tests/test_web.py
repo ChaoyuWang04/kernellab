@@ -145,3 +145,35 @@ def test_a_foreign_listener_is_never_killed_only_reported(tmp_path):
         s.getsockname()                                # socket 还活着 = 没被杀
     finally:
         s.close()
+
+
+def test_backbone_is_a_skeleton_not_a_working_solution():
+    """骨架给契约(常量 + 函数签名),函数体留空 —— 否则「重置」就不是从头写了。"""
+    import ast
+
+    from klab.web import backbone_for
+
+    src = backbone_for(ROOT, "matmul", "triton")
+    assert src, "problems/matmul/backbone/triton.py 应存在"
+    tree = ast.parse(src)
+    consts = {t.id for n in tree.body if isinstance(n, ast.Assign)
+              for t in n.targets if isinstance(t, ast.Name)}
+    assert {"BLOCK_M", "BLOCK_N", "BLOCK_K", "NUM_WARPS", "NUM_STAGES"} <= consts, "启动参数是契约,要给全"
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+    assert len(fns) == 1 and fns[0].name == "matmul_kernel"
+    assert [a.arg for a in fns[0].args.args][:3] == ["A_ptr", "B_ptr", "C_ptr"], "签名是契约,要给全"
+    assert len(fns[0].body) == 1 and isinstance(fns[0].body[0], ast.Pass), "函数体必须留空"
+
+
+def test_solutions_ladder_is_ordered_and_documented():
+    """参考答案按文件名序号排;标题取 docstring 第一行,说明取其余 —— 面板直接渲染这两样。"""
+    from klab.web import solutions_for
+
+    sols = solutions_for(ROOT, "matmul", "triton")
+    assert len(sols) >= 3, "至少要有基线 + 两级"
+    assert [s["id"] for s in sols] == sorted(s["id"] for s in sols), "顺序由文件名序号决定"
+    assert sols[0]["id"].startswith("0"), "第 0 级是基线"
+    for s in sols:
+        assert s["title"] and s["title"] != s["id"], f"{s['id']} 缺标题(docstring 第一行)"
+        assert len(s["note"]) > 80, f"{s['id']} 的说明太短,参考答案要讲清为什么"
+        assert "@triton.jit" in s["code"] and "def matmul_kernel" in s["code"]
