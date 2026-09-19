@@ -4,13 +4,22 @@
 
 输入 `bf16`,**累加用 fp32**,输出转回 `bf16`。这是深度学习里 GEMM 的标准做法:bf16 只有 8 位尾数,直接用 bf16 累加几百上千项会把有效位吃光。
 
-## 你只写算子
+## 你只写 kernel 本体
 
-造输入、对答案、计时、抓计数器都由系统做好了(`specs/<名>/spec.py`),就像 LeetCode 不用你写读输入。你只需要暴露一个入口函数:
+造输入、对答案、计时、抓计数器都由系统做好了,**分配输出、算 grid、传 stride 这些样板也由系统做**,就像 LeetCode 不用你写读输入。你只写两样:
 
 ```python
-def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor
+BLOCK_M, BLOCK_N, BLOCK_K = ...   # tile 形状与启动参数,系统读它们去算 grid
+NUM_WARPS, NUM_STAGES = ...
+
+@triton.jit
+def matmul_kernel(A_ptr, B_ptr, C_ptr, M, N, K,
+                  stride_am, stride_ak, stride_bk, stride_bn, stride_cm, stride_cn,
+                  BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+    ...
 ```
+
+系统按 `grid = (cdiv(M, BLOCK_M), cdiv(N, BLOCK_N))` 启动,所以改 tile 形状 grid 会自动跟着变。
 
 `M`、`N`、`K` 不保证是分块大小的整数倍 —— 越界的位置必须处理掉,否则会读到别人的内存或写坏结果。
 

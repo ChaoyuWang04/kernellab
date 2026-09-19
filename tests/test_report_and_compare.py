@@ -4,7 +4,7 @@ from pathlib import Path
 
 from klab.compare import collect
 from klab.config import load_targets
-from klab.kreport import load_advisories, load_raw, render, verdict
+from klab.kreport import _tail_wave, load_raw, render, verdict
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "softmax-5090home-ncu"
@@ -26,13 +26,10 @@ def test_raw_csv_parses_and_key_metrics_present():
 
 
 def test_verdict_is_memory_bound_for_softmax_fixture():
-    row = load_raw(FIX / "ncu-raw.csv")[0]
-    assert "内存侧受限" in verdict(row)
-
-
-def test_advisories_extracted():
-    adv = load_advisories(FIX / "ncu-details.txt")
-    assert adv and all(len(a) > 20 for a in adv)
+    """softmax 是逐元素算子,该判成搬数据受限;措辞用人话,不出现 NCU 术语。"""
+    v = verdict(load_raw(FIX / "ncu-raw.csv")[0])
+    assert "卡在搬数据上" in v and "显存" in v
+    assert "受限" not in v and "throughput" not in v
 
 
 def test_render_report_markdown_has_all_sections(tmp_path):
@@ -40,9 +37,12 @@ def test_render_report_markdown_has_all_sections(tmp_path):
     shutil.copytree(FIX, run)
     cfg = load_targets(ROOT)["5090home"]
     md = render(run, cfg, bench=None)
-    for section in ("判定", "### 速度", "### 各单元利用率", "### 发射与占用", "### 调度与 stall", "### NCU 建议"):
+    for section in ("判定", "### 跑多快", "### 哪个部件忙", "### 卡子怎么切的", "### warp 在等什么"):
         assert section in md
-    assert "DRAM" in md and "GB/s" in md
+    assert "显存" in md and "GB/s" in md
+    assert "NCU 建议" not in md, "NCU 英文原文摘录已去掉"
+    for jargon in ("Speed of Light", "Est. Speedup", "pct_of_peak", "Tensor pipe", "stall"):
+        assert jargon not in md, f"体检单不该出现术语 {jargon!r}"
     assert "1 GB/s" not in md  # 5090 的 Tbyte/s 单位要被换算成 GB/s
 
 
@@ -67,3 +67,19 @@ def test_compare_collects_latest_per_kernel_target(tmp_path):
     rows = collect(tmp_path, ["matmul"], None, latest_only=True)
     assert {(r["target"], r["median_ms"]) for r in rows} == {("5090home", 1.0), ("modal-h100", 0.5)}
     assert len(collect(tmp_path, ["matmul"], None, latest_only=False)) == 3
+
+
+def test_tail_wave_waste_is_worst_just_above_an_integer():
+    """3.01 波 = 要跑 4 波、最后一波只有 1% 的位置在用(NCU 给这一条的 Est. Speedup 是 25%);
+    3.98 波反而几乎没浪费。小数部分小 = 浪费大,不能按「接近整数」来判。"""
+    bad = _tail_wave(1024, 3.01, 170)
+    assert "25%" in bad and "1%" in bad and "没有浪费" not in bad
+
+    good = _tail_wave(1024, 3.98, 170)
+    assert "**" not in good, "浪费很小就不该加粗告警"
+    assert "没有浪费" in good
+
+    exact = _tail_wave(1020, 3.0, 170)
+    assert "没有浪费" in exact
+
+    assert _tail_wave(None, 3.01, 170) == "-" and _tail_wave(1024, 0, 170) == "-"

@@ -1,5 +1,10 @@
-"""接线:kernels/matmul_triton_ampere/kernel.py 的 matmul(a, b)(Triton,bf16)。"""
+"""接线:kernels/matmul_triton_ampere/kernel.py 的 matmul_kernel(Triton,bf16)。
+
+用户只写 @triton.jit 的 kernel 本体与 tile 常量;分配输出、算 grid、传 stride
+这些样板都在这里(run()),不占用户的代码空间。
+"""
 import torch
+import triton
 
 from klab.harness.spec import kernel_module
 
@@ -23,7 +28,23 @@ def make_inputs(case, device):
 
 
 def run(a, b):
-    return k.matmul(a, b)
+    """launcher:分配输出、按用户的 tile 常量算 grid、把 stride 传进去。"""
+    assert a.shape[1] == b.shape[0], f"K 不匹配:{tuple(a.shape)} @ {tuple(b.shape)}"
+    M, K = a.shape
+    N = b.shape[1]
+    c = torch.empty((M, N), device=a.device, dtype=a.dtype)
+    grid = (triton.cdiv(M, k.BLOCK_M), triton.cdiv(N, k.BLOCK_N))
+    k.matmul_kernel[grid](
+        a, b, c,
+        M, N, K,
+        a.stride(0), a.stride(1),
+        b.stride(0), b.stride(1),
+        c.stride(0), c.stride(1),
+        BLOCK_M=k.BLOCK_M, BLOCK_N=k.BLOCK_N, BLOCK_K=k.BLOCK_K,
+        num_warps=k.NUM_WARPS,
+        num_stages=k.NUM_STAGES,
+    )
+    return c
 
 
 def reference(a, b):

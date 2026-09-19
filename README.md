@@ -77,7 +77,7 @@ uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 
 
 ## 写一个算子
 
-你只写 `kernels/<名>/`,里面放算子源码(`kernel.py`、`kernel.cu`,可以多文件),暴露一个入口函数。接线由 agent 生成在 `specs/<名>/`:
+你只写 `kernels/<名>/` 里的算子本体。**分配输出、算 grid、传 stride 这类样板归接线管** —— Triton 的算子只需要一个 `@triton.jit` 函数加几个 tile 常量,`spec.py` 的 `run()` 读常量算 grid 并启动。接线由 agent 生成在 `specs/<名>/`:
 
 ```text
 kernels/<名>/kernel.py      你的算子(任何 DSL)
@@ -91,7 +91,7 @@ specs/<名>/baselines/       klab baseline 钉下的基线
 | 函数 | 作用 |
 |---|---|
 | `make_inputs(case, device) -> dict` | 按 case 造输入,固定种子 |
-| `run(**inputs) -> Tensor` | 调用你的算子(`k = kernel_module(__file__)` 拿到 `kernels/<名>/kernel.py`) |
+| `run(**inputs) -> Tensor` | **启动你的算子**:`k = kernel_module(__file__)` 拿到 `kernels/<名>/kernel.py`,分配输出、按 `k.BLOCK_*` 算 grid、传 stride |
 | `reference(**inputs) -> Tensor` | 同 dtype 的原生 torch 调用;check 用它比对,bench 用它当「相对 torch」标尺 |
 | `workload(case, **inputs) -> {flops, bytes}` | 按数学定义换算 TFLOPS 与 GB/s |
 
@@ -125,7 +125,7 @@ Modal 的 H100 容器里 ncu 可用、计数器可读(2026-09-18 实测),但锁�
 
 ## PTX:确认降到了哪一代指令
 
-体检单只说 Tensor pipe 用了多少,不说走的是哪条指令。练「某一代的特性」时用 `klab ptx`:在后端跑一次触发编译,从编译缓存取 PTX,按指令族计数,PTX 原文落 `runs/<id>/ptx/<kernel>.ptx`。
+体检单只说 tensor core 忙到几成,不说走的是哪条指令。练「某一代的特性」时用 `klab ptx`:在后端跑一次触发编译,从编译缓存取 PTX,按指令族计数,PTX 原文落 `runs/<id>/ptx/<kernel>.ptx`。
 
 ```bash
 uv run klab ptx matmul_triton_ampere            # 判定:命中世代 Ampere(mma.sync×64, cp.async×32)
@@ -141,14 +141,15 @@ uv run klab ptx matmul_triton_ampere            # 判定:命中世代 Ampere(mma
 
 | 段 | 回答什么 |
 |---|---|
-| 判定 | 一句话:内存侧 / 计算侧 / 延迟受限 / 接近均衡,加实测占用率。规则与 NCU 自己的一致:最高单元 ≥ 80% 判该侧受限,都 < 60% 判延迟受限 |
-| 速度 | NCU 内核时长、bench 中位数与分位数、TFLOPS 与 GB/s 对峰值的百分比、算术强度对 roofline 拐点在哪一侧 |
-| 各单元利用率 | SM、Tensor pipe、FMA/ALU/LSU、内存总、DRAM、L2(命中率)、L1(命中率) |
-| 发射与占用 | grid × block、波数、寄存器与共享内存用量、理论与实测占用率、**占用限制因子** |
-| 调度与 stall | 每调度器活跃与可发射 warp 数、前四个 stall 原因 |
-| NCU 建议 | details 页里的 OPT 段落原文摘录(含 Est. Speedup) |
+| 判定 | 一句话:卡在搬数据上 / 卡在算上 / 两头都没跑满在等 / 两边吃得差不多,外加 warp 位置用了多少 |
+| 跑多快 | 和 torch 比几倍、耗时与分位数、算力与带宽各用掉这张卡的几成、每搬 1 字节要算几次(对 roofline 拐点) |
+| 哪个部件忙,哪个闲 | 计算单元、tensor core、普通浮点/整数逻辑/访存指令、内存通道(显存 / L2 / L1,含命中率) |
+| 卡子怎么切的,SM 喂饱了吗 | 块数 × 线程数与**尾波浪费**、每线程寄存器、每块共享内存、warp 位置占用率与**卡在谁身上**、寄存器溢出 |
+| warp 在等什么 | 每调度器手上有几个 warp、能立刻发几个,以及前四个等待原因(译成人话,括号里给 NCU 原名) |
 
-读法:先看判定,再看对应那一段。内存侧受限看 DRAM 是否已到 80% 以上(是就到头了,要减字节数);计算侧看 Tensor pipe 与占用限制因子;延迟受限看 stall 原因与可发射 warp 数。
+措辞一律用人话,不留 NCU 英文术语。**不摘录 NCU 的 OPT 原文** —— 里面最值钱的尾波浪费,体检单自己算好了直接写在「切成多少块」那一行。
+
+读法:先看判定,再看它指向的那一段。卡在搬数据上就看显存是否已到 80%(是就到头了,只能减字节);卡在算上就看 tensor core 与「卡在谁身上」;两头都没跑满就看「warp 在等什么」。
 
 ## Modal 后端
 

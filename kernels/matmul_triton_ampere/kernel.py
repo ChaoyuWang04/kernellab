@@ -3,16 +3,13 @@
 C[M, N] = A[M, K] @ B[K, N],bf16 输入,fp32 累加,bf16 输出。
 没有任何优化:固定 tile、没有 autotune、没有 program 重排、没有 split-K。
 后面每个版本只在这份上改一处。
-
-正确性、测速、NCU 都不在这里:接线在 specs/matmul_triton_ampere/,跑法是 `klab run matmul_triton_ampere`。
 """
 
-import torch
 import triton
 import triton.language as tl
 
 
-# tile 形状与启动参数:v0 固定不调。想扫参再挪进 meta.toml 的 [sweep] 并加 configure()。
+# 启动参数。接线读这几个常量去算 grid 并启动,你只管调它们。
 BLOCK_M = 128
 BLOCK_N = 128
 BLOCK_K = 32
@@ -20,9 +17,6 @@ NUM_WARPS = 4      # 一个 CTA 里几个 warp
 NUM_STAGES = 3     # 共享内存流水线深度(Ampere 的 cp.async 多级缓冲)
 
 
-# ----------------------------------------------------------------------
-# kernel:"我"是一个 CTA,负责 C 的一块 BLOCK_M x BLOCK_N
-# ----------------------------------------------------------------------
 @triton.jit
 def matmul_kernel(
     A_ptr, B_ptr, C_ptr,                 # 三个矩阵的起始地址
@@ -69,30 +63,3 @@ def matmul_kernel(
     c_ptrs = C_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
     c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
     tl.store(c_ptrs, acc.to(tl.bfloat16), mask=c_mask)
-
-
-# ----------------------------------------------------------------------
-# launcher:定 grid,把张量交给 kernel
-# ----------------------------------------------------------------------
-def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    assert a.shape[1] == b.shape[0], f"K 不匹配:{a.shape} @ {b.shape}"
-    assert a.is_cuda and b.is_cuda
-    assert a.dtype == torch.bfloat16 and b.dtype == torch.bfloat16
-    M, K = a.shape
-    N = b.shape[1]
-    c = torch.empty((M, N), device=a.device, dtype=torch.bfloat16)
-
-    # grid:C 切成多少块,每块一个 program(= 一个 CTA)
-    grid = (triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))
-
-    matmul_kernel[grid](
-        a, b, c,
-        M, N, K,
-        a.stride(0), a.stride(1),
-        b.stride(0), b.stride(1),
-        c.stride(0), c.stride(1),
-        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-        num_warps=NUM_WARPS,
-        num_stages=NUM_STAGES,
-    )
-    return c
