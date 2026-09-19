@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import errno
 import html
 import io
 import json
@@ -458,10 +459,32 @@ class Handler(BaseHTTPRequestHandler):
         return {"saved": f"kernels/{k['name']}/{src.name}", "bytes": len(code.encode())}
 
 
+def _port_taken(port: int) -> str:
+    """端口被占是家常便饭(上一次的面板还开着),给一句能照做的话,不要甩 traceback。"""
+    who = ""
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=5).stdout.splitlines()
+        if len(out) > 1:
+            who = f"(PID {out[1].split()[1]},`kill {out[1].split()[1]}` 停掉它)"
+    except Exception:
+        pass
+    return (
+        f"端口 {port} 已被占用{who}。\n"
+        f"多半是上一次的 klab web 还开着 —— 那个进程跑的是它启动时的代码,改过之后要重起才生效。\n"
+        f"要么停掉它,要么换个端口:uv run klab web --port {port + 1}"
+    )
+
+
 def serve(root: Path, port: int = 8777, open_browser: bool = True) -> None:
-    ensure_monaco()
     Handler.root = root
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)   # 先占端口再取 Monaco,免得白下 24 MB
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        raise SystemExit(_port_taken(port)) from None
+    ensure_monaco()
     url = f"http://127.0.0.1:{port}"
     print(f"kernellab 面板 {url}(Ctrl-C 退出)")
     if open_browser:

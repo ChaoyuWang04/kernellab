@@ -121,3 +121,25 @@ def test_kernel_entries_carry_editor_metadata():
     for k in list_kernels(ROOT):
         if k.get("ready"):
             assert k["language"] in ("python", "cpp") and k["source"] and k["problem"]
+
+
+def test_busy_port_gives_an_actionable_line_not_a_traceback(tmp_path):
+    """端口被占是家常便饭(上一次的面板还开着),不该甩 traceback。"""
+    import socket
+
+    import pytest
+
+    from klab.web import serve
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    port = s.getsockname()[1]
+    try:
+        with pytest.raises(SystemExit) as e:
+            serve(tmp_path, port=port, open_browser=False)
+        msg = str(e.value)
+        assert str(port) in msg and "--port" in msg
+        assert "Traceback" not in msg
+    finally:
+        s.close()
