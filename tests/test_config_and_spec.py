@@ -79,3 +79,19 @@ def test_vscode_tasks_list_all_targets():
     for name, c in cfgs.items():
         if c.kind != "local":
             assert name in opts, f".vscode/tasks.json 的后端下拉缺 {name}"
+
+
+def test_arch_features_sm120_has_tma_but_not_wgmma():
+    """5090(sm_120)实测:TileLang 在它上面发 cp.async.bulk.tensor(TMA),但 mma 仍是 mma.sync。
+    cc 数字不是超集关系 —— 数字最大的 sm_120 没有 Hopper 的 wgmma。
+
+    用 AST 读而不是 import:runner.py 在后端跑、顶层 import torch,本地没有。
+    """
+    tree = ast.parse((ROOT / "klab" / "harness" / "runner.py").read_text())
+    node = next(n.value for n in tree.body
+                if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", "") == "ARCH_FEATURES" for t in n.targets))
+    table = {k.value: {e.value for e in v.elts} for k, v in zip(node.keys, node.values)}
+    assert "tma" in table[12], "klab ptx 在 5090 上实测到了 cp.async.bulk.tensor"
+    assert "wgmma" not in table[12] and "tcgen05" not in table[12]
+    assert "wgmma" in table[9] and "tcgen05" in table[10]

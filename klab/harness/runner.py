@@ -45,7 +45,7 @@ ARCH_FEATURES = {
     8: {"mma_sync", "async_copy"},                                                   # Ampere / Ada
     9: {"mma_sync", "async_copy", "wgmma", "tma", "cluster", "dsmem"},               # Hopper
     10: {"mma_sync", "async_copy", "tma", "cluster", "dsmem", "tcgen05", "tmem"},    # 数据中心 Blackwell(B200)
-    12: {"mma_sync", "async_copy", "block_scaled_mma"},                              # 消费级 Blackwell(5090);TMA 支持待实测
+    12: {"mma_sync", "async_copy", "tma", "block_scaled_mma"},                       # 消费级 Blackwell(5090):有 TMA,没有 wgmma
 }
 
 
@@ -181,7 +181,7 @@ def do_ptx(spec: KernelSpec, mod, cases: list[dict], out_dir: Path) -> list[dict
     inputs = mod.make_inputs(case, "cuda")
     mod.run(**inputs)
     torch.cuda.synchronize()
-    records = ptxdump.dump(spec, out_dir)
+    records = ptxdump.dump(spec, mod, out_dir)
     for r in records:
         hit = ", ".join(f"{k}×{v}" for k, v in sorted(r["counts"].items())) or "(无)"
         print(f"[ptx] {r['kernel']:<16} {r['ptx_lines']:>5} 行  世代 {r['generations'] or ['—']}  {hit}", flush=True)

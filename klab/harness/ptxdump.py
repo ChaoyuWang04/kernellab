@@ -104,7 +104,7 @@ def _walk(obj, depth: int = 0):
         yield obj
 
 
-def _from_triton(spec) -> dict[str, str]:
+def _from_triton(spec, mod) -> dict[str, str]:
     """扫用户 kernel 模块里的 @triton.jit 函数,从它们的编译缓存取 PTX。"""
     from triton.runtime.jit import JITFunction
 
@@ -123,7 +123,7 @@ def _from_triton(spec) -> dict[str, str]:
     return out
 
 
-def _from_cppext(spec) -> dict[str, str]:
+def _from_cppext(spec, mod) -> dict[str, str]:
     """cuda / tk:cppext 把 .cu 编成 torch 扩展的 .so,用 cuobjdump 把 PTX 抠出来。
 
     编译产物在 ~/.cache/klab/<算子名>-<架构>/;按名字直接定位,不去猜 sys.modules
@@ -145,16 +145,50 @@ def _from_cppext(spec) -> dict[str, str]:
     return out
 
 
-# 一种工具链一个取法。tilelang / cute 还没接:tilelang 走 nvcc 生成 .cu、
-# CuTe 是 JIT 出 cubin,取法都和上面两种不同,等各自有算子时再按实测补。
+def _objects(root, depth: int = 0):
+    """从 spec 模块的全局变量往下找对象(编译产物通常被 spec 缓存在 dict 里)。"""
+    if depth > 3:
+        return
+    if isinstance(root, dict):
+        for v in root.values():
+            yield from _objects(v, depth + 1)
+    elif isinstance(root, (list, tuple, set)):
+        for v in root:
+            yield from _objects(v, depth + 1)
+    else:
+        yield root
+
+
+def _from_tilelang(spec, mod) -> dict[str, str]:
+    """TileLang:编译产物是 JITKernel,它自己就有 PTX(_get_ptx / export_ptx)。
+
+    去 spec 模块的全局变量里找 —— 接线按形状缓存编译结果,缓存里装的就是它。
+    """
+    out: dict[str, str] = {}
+    for i, obj in enumerate(_objects(vars(mod))):
+        get = getattr(obj, "_get_ptx", None)
+        if not callable(get):
+            continue
+        try:
+            ptx = get()
+        except Exception:
+            continue
+        if ptx and ptx.strip():
+            out[spec.name if not out else f"{spec.name}#{i}"] = ptx
+    return out
+
+
+# 一种工具链一个取法。cute 还没接:4.7.1 的 JitFunctionArtifacts 有 PTX 字段但填不上
+# (DeviceTarget 选项打开也还是 None),dump_to_object 出来的是宿主 ELF,cuobjdump 抠不出。
 _COLLECTORS = {
     "triton": _from_triton,
+    "tilelang": _from_tilelang,
     "cuda": _from_cppext,
     "tk": _from_cppext,
 }
 
 
-def collect(spec) -> dict[str, str]:
+def collect(spec, mod) -> dict[str, str]:
     """{kernel 名: PTX 文本}。调用前必须已经跑过一次算子,否则编译缓存是空的。"""
     toolchain = spec.toolchain
     fn = _COLLECTORS.get(toolchain)
@@ -163,7 +197,7 @@ def collect(spec) -> dict[str, str]:
             f"klab ptx 还没接 {toolchain} 工具链(目前只有 {list(_COLLECTORS)});"
             "加法:在 klab/harness/ptxdump.py 的 _COLLECTORS 里补一个取 PTX 的函数"
         )
-    asm = fn(spec)
+    asm = fn(spec, mod)
     if not asm:
         raise SystemExit(
             "编译缓存里没有 PTX:确认 kernel 真的被启动过一次,"
@@ -172,12 +206,12 @@ def collect(spec) -> dict[str, str]:
     return asm
 
 
-def dump(spec, out_dir: Path) -> list[dict]:
+def dump(spec, mod, out_dir: Path) -> list[dict]:
     """取 PTX、写盘、计数。返回给 result.json 用的记录。"""
     d = out_dir / "ptx"
     d.mkdir(parents=True, exist_ok=True)
     records = []
-    for name, ptx in collect(spec).items():
+    for name, ptx in collect(spec, mod).items():
         path = d / f"{name}.ptx"
         path.write_text(ptx)
         c = count(ptx)

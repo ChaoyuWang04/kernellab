@@ -1,0 +1,33 @@
+name = "matmul_cute"
+problem = "matmul"          # 与 matmul_triton_ampere / matmul_tilelang 同一道题
+toolchain = "cute"
+kernel_regex = "matmul_kernel"   # CuTe 生成的名字带 cutlass 前缀,实测后再收紧
+
+[requires]
+min_cc = 8.0
+features = ["mma_sync", "async_copy"]
+
+[tolerance]
+atol = 1e-1
+rtol = 1e-2
+
+[[cases]]
+name = "4096-bf16"
+m = 4096
+n = 4096
+k = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "8192-bf16"
+m = 8192
+n = 8192
+k = 8192
+dtype = "bfloat16"
+
+[[cases]]
+name = "1000x999x777-bf16"
+m = 1000
+n = 999
+k = 777
+dtype = "bfloat16"

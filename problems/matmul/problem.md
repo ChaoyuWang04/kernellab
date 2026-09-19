@@ -19,7 +19,9 @@ def matmul_kernel(A_ptr, B_ptr, C_ptr, M, N, K,
     ...
 ```
 
-系统按 `grid = (cdiv(M, BLOCK_M), cdiv(N, BLOCK_N))` 启动,所以改 tile 形状 grid 会自动跟着变。
+系统按 `grid = (cdiv(M, BLOCK_M) * cdiv(N, BLOCK_N),)` 启动一维 grid,所以改 tile 形状 grid 会自动跟着变;**pid 怎么换算成「第几块」是 kernel 自己的事**(换一种换算方式就是优化路线第 6 级的 L2 swizzle,不用动任何接线)。
+
+其他语言的契约见各自的骨架:TileLang 写 `T.prim_func`,CUDA 写 `__global__` + `matmul_launch`,CuTe DSL 写 `@cute.kernel`。
 
 `M`、`N`、`K` 不保证是分块大小的整数倍 —— 越界的位置必须处理掉,否则会读到别人的内存或写坏结果。
 
