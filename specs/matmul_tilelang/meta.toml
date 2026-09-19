@@ -1,0 +1,34 @@
+name = "matmul_tilelang"
+problem = "matmul"          # 与 matmul_triton_ampere 同一道题,数字可以横着比
+toolchain = "tilelang"
+kernel_regex = "gemm_kernel"   # TileLang 0.1.14 生成的 kernel 名(ncu 实测)
+
+# T.gemm 会按架构自己选 mma.sync / wgmma / tcgen05,所以不声明特性,两张卡都能跑。
+[requires]
+min_cc = 8.0
+features = ["mma_sync", "async_copy"]
+
+[tolerance]
+atol = 1e-1
+rtol = 1e-2
+
+[[cases]]
+name = "4096-bf16"
+m = 4096
+n = 4096
+k = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "8192-bf16"
+m = 8192
+n = 8192
+k = 8192
+dtype = "bfloat16"
+
+[[cases]]
+name = "1000x999x777-bf16"
+m = 1000
+n = 999
+k = 777
+dtype = "bfloat16"
