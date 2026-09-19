@@ -21,10 +21,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -459,31 +461,66 @@ class Handler(BaseHTTPRequestHandler):
         return {"saved": f"kernels/{k['name']}/{src.name}", "bytes": len(code.encode())}
 
 
-def _port_taken(port: int) -> str:
-    """端口被占是家常便饭(上一次的面板还开着),给一句能照做的话,不要甩 traceback。"""
-    who = ""
+def _listener_pid(port: int) -> int | None:
     try:
         out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
                              capture_output=True, text=True, timeout=5).stdout.splitlines()
-        if len(out) > 1:
-            who = f"(PID {out[1].split()[1]},`kill {out[1].split()[1]}` 停掉它)"
+        return int(out[1].split()[1]) if len(out) > 1 else None
     except Exception:
-        pass
+        return None
+
+
+def _is_our_panel(port: int) -> bool:
+    """端口上蹲着的是不是我们自己的面板 —— 只有确认是,才敢杀。"""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=3) as r:
+            return "repo" in json.loads(r.read().decode())
+    except Exception:
+        return False
+
+
+def _take_over(port: int) -> bool:
+    """旧面板跑的是它启动时的代码,改完必须重起。默认自动替掉它,省得每次手动 kill。"""
+    if not _is_our_panel(port):
+        return False
+    pid = _listener_pid(port)
+    if not pid or pid == os.getpid():
+        return False
+    print(f"停掉旧面板(PID {pid})…", flush=True)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    for _ in range(50):                      # 最多等 5 秒让端口释放
+        time.sleep(0.1)
+        if _listener_pid(port) is None:
+            return True
+    return False
+
+
+def _port_taken(port: int) -> str:
+    pid = _listener_pid(port)
+    who = f"(PID {pid},`kill {pid}` 停掉它)" if pid else ""
     return (
-        f"端口 {port} 已被占用{who}。\n"
-        f"多半是上一次的 klab web 还开着 —— 那个进程跑的是它启动时的代码,改过之后要重起才生效。\n"
+        f"端口 {port} 被别的程序占着{who} —— 不是 klab 面板,所以没敢自动停。\n"
         f"要么停掉它,要么换个端口:uv run klab web --port {port + 1}"
     )
 
 
-def serve(root: Path, port: int = 8777, open_browser: bool = True) -> None:
+def serve(root: Path, port: int = 8777, open_browser: bool = True, restart: bool = True) -> None:
     Handler.root = root
-    try:
-        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)   # 先占端口再取 Monaco,免得白下 24 MB
-    except OSError as e:
-        if e.errno != errno.EADDRINUSE:
-            raise
-        raise SystemExit(_port_taken(port)) from None
+    srv = None
+    for attempt in (1, 2):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)  # 先占端口再取 Monaco,免得白下 24 MB
+            break
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                raise
+            if attempt == 1 and restart and _take_over(port):
+                continue
+            raise SystemExit(_port_taken(port)) from None
+    assert srv is not None
     ensure_monaco()
     url = f"http://127.0.0.1:{port}"
     print(f"kernellab 面板 {url}(Ctrl-C 退出)")

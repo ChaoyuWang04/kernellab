@@ -123,23 +123,25 @@ def test_kernel_entries_carry_editor_metadata():
             assert k["language"] in ("python", "cpp") and k["source"] and k["problem"]
 
 
-def test_busy_port_gives_an_actionable_line_not_a_traceback(tmp_path):
-    """端口被占是家常便饭(上一次的面板还开着),不该甩 traceback。"""
+def test_a_foreign_listener_is_never_killed_only_reported(tmp_path):
+    """自动接管只许停掉我们自己的面板。端口上是别的程序时:不动它,给一句能照做的话,不甩 traceback。"""
     import socket
 
     import pytest
 
-    from klab.web import serve
+    from klab.web import _is_our_panel, serve
 
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     s.listen(1)
     port = s.getsockname()[1]
     try:
-        with pytest.raises(SystemExit) as e:
+        assert _is_our_panel(port) is False, "非面板不能被认成面板,否则会误杀"
+        with pytest.raises(SystemExit) as e:          # restart 默认开,仍不该动它
             serve(tmp_path, port=port, open_browser=False)
         msg = str(e.value)
-        assert str(port) in msg and "--port" in msg
+        assert str(port) in msg and "--port" in msg and "没敢自动停" in msg
         assert "Traceback" not in msg
+        s.getsockname()                                # socket 还活着 = 没被杀
     finally:
         s.close()

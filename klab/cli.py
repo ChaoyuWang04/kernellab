@@ -188,6 +188,28 @@ def bench(
     console.print(f"[dim]结果 {out}[/]")
 
 
+def _stage_cmd(tgt: Target, spec: KernelSpec, rel: str, rid: str, mode: str,
+               cases: list[str], extra: list[str], ncu_prefix: str = "") -> str:
+    """一个阶段的远端命令。拼成串是为了让 check/bench/ncu 共用一次连接(Modal 上就是一次容器启动)。"""
+    remote_run = f"{tgt.runs_dir}/{rid}"
+    case_args = " ".join(f"--case {c}" for c in cases)
+    return (
+        f"mkdir -p {remote_run} && {ncu_prefix}{tgt.env_python(spec.toolchain)} -m klab.harness.runner "
+        f"--kernel {rel} --mode {mode} --out {remote_run}/result.json {case_args} {' '.join(extra)}"
+    )
+
+
+def _finish(root: Path, spec: KernelSpec, rid: str) -> Path | None:
+    """把 case 元数据并进结果(报表要查 dtype);没落盘就返回 None。"""
+    out = root / "runs" / rid
+    if not (out / "result.json").exists():
+        return None
+    data = json.loads((out / "result.json").read_text())
+    data["cases"] = spec.cases
+    (out / "result.json").write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    return out
+
+
 @app.command()
 def run(
     kernel: Path,
@@ -197,20 +219,59 @@ def run(
     ignore_requires: bool = typer.Option(False, "--ignore-requires"),
     open_gui: bool = typer.Option(False, "--open"),
 ):
-    """一条龙:check → bench → ncu,最后打印体检单路径。agent 接到「测一下这个 kernel」默认用它。"""
+    """一条龙:check → bench → ncu,最后打印体检单。agent 接到「测一下这个 kernel」默认用它。
+
+    三个阶段拼成一条命令串发过去,只连一次后端 —— Modal 上这意味着一次容器启动而不是三次。
+    check 不过就用 `&&` 断在那里,后面两段不跑。
+    """
+    import shlex
+
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
     spec = KernelSpec.load(kdir)
+    rel = kdir.relative_to(root).as_posix()
     ign = ["--ignore-requires"] if ignore_requires else []
-    out = _remote_run(root, cfg, tgt, kdir, "check", case or [], ign)
-    if not print_result(out / "result.json", cfg):
-        raise SystemExit("正确性未通过,停在 check;先修算子再测速")
-    out = _remote_run(root, cfg, tgt, kdir, "bench", case or [], [f"--iters {iters}", "--warmup 10"] + ign)
-    print_result(out / "result.json", cfg)
-    _print_baseline_delta(kdir, cfg, out / "result.json")
     ncu_case = case or [spec.cases[0]["name"]]
-    console.print(f"[dim]→ ncu 只抓 case {ncu_case}(全部 case 用 klab ncu 单独跑)[/]")
-    _ncu_impl(root, cfg, tgt, kdir, ncu_case, False, 1, open_gui)
+
+    rids = {m: _run_id(spec.name, cfg.name, m) for m in ("check", "bench", "ncu")}
+    kfilter = f"-k {shlex.quote('regex:' + spec.kernel_regex)} " if spec.kernel_regex else ""
+    clock = f"--clock-control {cfg.extra.get('ncu_clock_control', 'base')}"
+    ncu_run = f"{tgt.runs_dir}/{rids['ncu']}"
+    cmds = [
+        _stage_cmd(tgt, spec, rel, rids["check"], "check", case or [], ign),
+        _stage_cmd(tgt, spec, rel, rids["bench"], "bench", case or [], [f"--iters {iters}", "--warmup 10"] + ign),
+        _stage_cmd(tgt, spec, rel, rids["ncu"], "ncu", ncu_case,
+                   ["--launches 1"] + ign,
+                   ncu_prefix=f"ncu --target-processes all {kfilter}{NCU_BASIC} {clock} -f -o {ncu_run}/ncu "),
+        f"ncu --import {ncu_run}/ncu.ncu-rep --page details > {ncu_run}/ncu-details.txt",
+        f"ncu --import {ncu_run}/ncu.ncu-rep --page raw --csv > {ncu_run}/ncu-raw.csv",
+    ]
+
+    os.environ["KLAB_TOOLCHAIN"] = spec.toolchain
+    console.print(f"[dim]→ {cfg.name}: sync[/]")
+    tgt.sync(root)
+    console.print(f"[dim]→ {cfg.name}: check → bench → ncu {rel}(一次连接跑完;ncu 只抓 case {ncu_case})[/]")
+    tgt.run(" && ".join(cmds), check=False)
+
+    for rid in rids.values():
+        try:
+            tgt.fetch(f"{tgt.runs_dir}/{rid}", root / "runs")
+        except Exception:
+            pass  # 断在前面的阶段,后面的目录根本不存在
+    outs = {m: _finish(root, spec, rid) for m, rid in rids.items()}
+
+    if not outs["check"]:
+        raise SystemExit(f"后端 {cfg.name} 没有产出结果:看上面的输出")
+    if not print_result(outs["check"] / "result.json", cfg):
+        raise SystemExit("正确性未通过,停在 check;先修算子再测速")
+    if outs["bench"]:
+        print_result(outs["bench"] / "result.json", cfg)
+        _print_baseline_delta(kdir, cfg, outs["bench"] / "result.json")
+    if outs["ncu"]:
+        _print_report(root, cfg, outs["ncu"])
+        console.print(f"[dim]NCU 报告 {outs['ncu'] / 'ncu.ncu-rep'} · 体检单 {outs['ncu'] / 'report.md'}[/]")
+        if open_gui:
+            _open_ncu(outs["ncu"] / "ncu.ncu-rep")
 
 
 @app.command()
@@ -450,11 +511,16 @@ def exec_cmd(script: str, target: Optional[str] = TargetOpt):
 def web(
     port: int = typer.Option(8777, help="监听端口,只绑 127.0.0.1"),
     no_open: bool = typer.Option(False, "--no-open", help="不自动打开浏览器"),
+    no_restart: bool = typer.Option(False, "--no-restart", help="端口上有旧面板时不自动替掉它"),
 ):
-    """本地面板(算子版 LeetCode):左边题面与优化路线,右边写算子;Run 看对不对,Submit 出体检单。"""
+    """本地面板(算子版 LeetCode):左边题面与优化路线,右边写算子;Run 看对不对,Submit 出体检单。
+
+    端口上蹲着旧面板就自动停掉它再起 —— 旧进程跑的是它启动时的代码,改过之后必须重起。
+    只认我们自己的面板(先探 /api/state),别的程序占着端口绝不动手。
+    """
     from klab.web import serve
 
-    serve(repo_root(), port=port, open_browser=not no_open)
+    serve(repo_root(), port=port, open_browser=not no_open, restart=not no_restart)
 
 
 @app.command()

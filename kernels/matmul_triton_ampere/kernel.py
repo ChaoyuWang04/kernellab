@@ -1,13 +1,5 @@
-"""Triton × Ampere v0 — 最朴素的矩阵乘基线。
-
-C[M, N] = A[M, K] @ B[K, N],bf16 输入,fp32 累加,bf16 输出。
-没有任何优化:固定 tile、没有 autotune、没有 program 重排、没有 split-K。
-后面每个版本只在这份上改一处。
-"""
-
 import triton
 import triton.language as tl
-
 
 # 启动参数。接线读这几个常量去算 grid 并启动,你只管调它们。
 BLOCK_M = 128
