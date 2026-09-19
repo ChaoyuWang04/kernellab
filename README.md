@@ -7,9 +7,10 @@ Mac 上写算子,远端 GPU 上编译、跑、测速、NCU。执行后端可插�
 本文面向使用。agent 的操作流程在 **[docs/01-AGENT-PLAYBOOK.md](docs/01-AGENT-PLAYBOOK.md)**,维护与扩展看 **[docs/00-START.md](docs/00-START.md)**。本地测试:`uv run pytest`。
 
 ```text
-Mac 浏览器/CLI ── klab ──┬── ssh:5090home   (home lab,RTX 5090)
+Mac 浏览器/CLI ── klab ──┬── ssh:5090home   (home lab,RTX 5090 / sm_120)
+                         ├── modal-a100     (Modal,A100-80GB / sm_80,真·安培)
+                         ├── modal-h100     (Modal,H100 / sm_90;gpu 字段可换 B200 等)
                          ├── ssh:<租的机器> (vast / runpod / autodl,同一套 SshTarget)
-                         ├── modal-h100     (Modal 云 GPU,gpu 字段选卡型)
                          └── local          (在 GPU 盒子上调试 harness 自己用)
 ```
 

@@ -35,3 +35,16 @@ ncu_clock_control = "none"           # 容器里锁不了时钟;数字会比锁�
 peak_gbps = 3350             # H100 SXM HBM3 公开规格
 peak_tflops_fp16 = 770       # klab probe 2026-09-18 实测 8192³ fp16 matmul 770 TFLOPS(公开规格 989 dense)
 peak_tflops_fp32 = 67
+
+# 真·安培(数据中心)。练「安培特性」这条线的正主:5090 虽然也走 mma.sync + cp.async,
+# 但它是 sm_120,L2 96 MB、SM 170 个、消费卡会降频,共享内存上限也不同,结论不通用。
+[targets.modal-a100]
+kind = "modal"
+gpu = "A100-80GB"
+root = "/root/klab"
+api_proxy = "http://127.0.0.1:3213"
+ncu_clock_control = "none"           # 容器里锁不了时钟
+peak_gbps = 2039             # A100 80GB SXM HBM2e 公开规格(klab probe 实测拷贝 1732.6)
+peak_tflops_fp16 = 258       # 2026-09-19 实测可达上限:autotune 后的 triton matmul 4096³ 到 257.9
+                             # (klab probe 只测到 241,它用的是固定配置;公开规格 312 dense)
+peak_tflops_fp32 = 19.5

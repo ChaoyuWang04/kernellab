@@ -113,6 +113,9 @@ def _from_triton(spec, mod) -> dict[str, str]:
         if not name.startswith("userkernel."):  # kernel_module() 用的前缀
             continue
         for attr, obj in vars(module).items():
+            # @triton.autotune / @triton.heuristics 会把 JITFunction 包一层,真身在 .fn
+            while not isinstance(obj, JITFunction) and hasattr(obj, "fn"):
+                obj = obj.fn
             if not isinstance(obj, JITFunction):
                 continue
             caches = [getattr(obj, a) for a in ("device_caches", "cache") if hasattr(obj, a)]

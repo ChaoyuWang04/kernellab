@@ -135,7 +135,8 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 **架构与工具链**
 
 - 5090 是 sm_120:没有 wgmma / tcgen05,**但有 TMA**(`klab ptx` 实测 TileLang 在它上面发 `cp.async.bulk.tensor`)。共享内存上限 101376 字节,170 个 SM。`ARCH_FEATURES` 按 major 版本给特性,**cc 数字不是超集关系**。
-- 5090 是消费卡,持续满载的大 GEMM(如 8192³)会降频,bench 的 p10 可能只有中位数的一半。这一档的绝对值不可比,只能和同时段的 torch 比。
+- 5090 是消费卡,持续满载的大 GEMM(如 8192³)会降频,bench 的 p10 可能只有中位数的一半。这一档的绝对值不可比,只能和同时段的 torch 比。A100 没有这个问题。
+- `klab probe` 的 `peak_tflops_fp16` 是用固定配置测的,会低于真实可达上限(A100 上 probe 测 241,autotune 后的 triton matmul 到 257.9)。峰值应该填「见过的最好成绩」,否则 %峰值 会超过 100%。
 - TileLang 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`。写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。
 - ThunderKittens:sm_90 起要 `compute_XXa` 架构目标;宏 `KITTENS_SM<xx>` 只能定义一个;`gl` 的编译期维度要传 `nullptr`,用 `make_gl<GL>(ptr, b, d, r, c)` 省事;`warpid()` 在 `kittens::` 命名空间。
 - torch 扩展里用 `getCurrentCUDAStream` 要 `#include <ATen/cuda/CUDAContext.h>`。
