@@ -26,20 +26,35 @@ def make_inputs(case, device):
     return {"a": a, "b": b}
 
 
-def _compiled(M, N, K, dtype):
-    key = (M, N, K, dtype, k.BLOCK_M, k.BLOCK_N, k.BLOCK_K, k.NUM_STAGES, k.THREADS)
+def _split_k() -> int:
+    return int(getattr(k, "SPLIT_K", 1))
+
+
+def _compiled(M, N, K, dtype, out_dtype):
+    key = (M, N, K, dtype, out_dtype, k.BLOCK_M, k.BLOCK_N, k.BLOCK_K, k.NUM_STAGES, k.THREADS, _split_k())
     if key not in _cache:
-        @tilelang.jit(out_idx=[-1])          # 最后一个张量参数是输出,由 TileLang 自己分配
+        # 普通情况让 TileLang 自己分配输出(out_idx=[-1]);
+        # split-K 时输出必须由我们预先清零后传进去,所以不能标 out_idx。
+        jit = tilelang.jit if _split_k() > 1 else (lambda f: tilelang.jit(out_idx=[-1])(f))
+
+        @jit
         def build():
-            return k.gemm(M, N, K, dtype, "float")
+            return k.gemm(M, N, K, dtype, "float", out_dtype)
         _cache[key] = build()
     return _cache[key]
 
 
 def run(a, b):
+    """launcher。SPLIT_K > 1 时:多个 block 往同一块 C 上 atomic_add,输出必须是
+    fp32 且预先清零 —— 与 Triton 版同一套约定,kernel 里定义常量就自动生效。"""
     M, K = a.shape
     N = b.shape[1]
-    return _compiled(M, N, K, str(a.dtype).replace("torch.", ""))(a, b)
+    dtype = str(a.dtype).replace("torch.", "")
+    if _split_k() > 1:
+        out = torch.zeros((M, N), device=a.device, dtype=torch.float32)
+        _compiled(M, N, K, dtype, "float")(a, b, out)
+        return out.to(a.dtype)
+    return _compiled(M, N, K, dtype, dtype)(a, b)
 
 
 def reference(a, b):

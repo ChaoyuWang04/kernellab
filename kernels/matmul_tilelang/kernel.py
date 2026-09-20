@@ -16,14 +16,18 @@ NUM_STAGES = 3     # T.Pipelined 的流水级数
 THREADS = 128      # 一个 block 多少线程
 
 
-def gemm(M, N, K, dtype, accum_dtype):
-    """返回一个 T.prim_func。M/N/K 是编译期形状:TileLang 按形状特化,一个 case 编一次。"""
+def gemm(M, N, K, dtype, accum_dtype, out_dtype=None):
+    """返回一个 T.prim_func。M/N/K 是编译期形状:TileLang 按形状特化,一个 case 编一次。
+
+    out_dtype 由接线传:普通情况与输入同 dtype;split-K 时是 fp32(见参考答案 3)。
+    """
+    out_dtype = out_dtype or dtype
 
     @T.prim_func
     def kernel(
         A: T.Tensor((M, K), dtype),
         B: T.Tensor((K, N), dtype),
-        C: T.Tensor((M, N), dtype),
+        C: T.Tensor((M, N), out_dtype),
     ):
         # 二维 grid:(列块, 行块)。TileLang 自己管线程到数据的映射,不用手写指针
         with T.Kernel(T.ceildiv(N, BLOCK_N), T.ceildiv(M, BLOCK_M), threads=THREADS) as (bx, by):

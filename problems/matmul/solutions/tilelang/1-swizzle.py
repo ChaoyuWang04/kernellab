@@ -1,18 +1,15 @@
-"""朴素分块 —— TileLang 基线
+"""L2 swizzle —— 一句话 vs 十行
 
-TileLang 把「搬到共享内存 → 开流水 → 用 tensor core 乘」写成三句话:
-T.copy / T.Pipelined / T.gemm。不写指针、不写掩码 —— 边界它自己处理,
-降到 mma.sync 还是 wgmma 也由它按架构决定。
+Triton 版的这一级要自己写十行 pid 换算(group_id / first_pid_m / group_size_m ...),
+TileLang 一句 T.use_swizzle(panel_size) 就完了 —— block 到 tile 的映射是调度层的事,
+不是算法的事,TileLang 把它放在了调度层。
 
-5090 实测,与同分块的 Triton 版并排:
+这是两种 DSL 设计哲学的直接对照:Triton 的 grid 是裸的一维 pid,重排归你;
+TileLang 的 T.Kernel 是带语义的,重排是它的一个旋钮。
 
-    case                Triton      TileLang
-    4096³               0.95×       0.88×      (205 vs 187 TFLOPS)
-    8192³               1.01×       0.96×
-    1000×999×777        0.37×       0.57×
-
-大方阵 Triton 赢,喂不满 GPU 的小奇怪形状 TileLang 赢。同样的分块常量、
-同样的 case 与容差,差的是两个编译器各自的取舍 —— 这正是一道题写多种语言的意义。
+5090 实测 4096³:189.0 vs 基线 187.5 TFLOPS —— +0.8%,在噪声里。
+和 Triton 版同样的结论:L2 命中率本来就高,没有可省的。
+代码上省了十行,性能上没省什么 —— 这一级买的是可读性,不是速度。
 """
 
 import tilelang.language as T
@@ -22,6 +19,7 @@ BLOCK_M = 128
 BLOCK_N = 128
 BLOCK_K = 32
 NUM_STAGES = 3     # T.Pipelined 的流水级数
+SWIZZLE_PANEL = 10  # L2 swizzle 的面板宽度;0 关掉
 THREADS = 128      # 一个 block 多少线程
 
 
@@ -40,6 +38,9 @@ def gemm(M, N, K, dtype, accum_dtype, out_dtype=None):
     ):
         # 二维 grid:(列块, 行块)。TileLang 自己管线程到数据的映射,不用手写指针
         with T.Kernel(T.ceildiv(N, BLOCK_N), T.ceildiv(M, BLOCK_M), threads=THREADS) as (bx, by):
+            # 一句话开 L2 swizzle:把 block 按 panel 分组铺,同批 block 共用 tile。
+            # Triton 里这一级要自己写十行 pid 换算(见 triton/1-swizzle.py)
+            T.use_swizzle(panel_size=SWIZZLE_PANEL)
             A_shared = T.alloc_shared((BLOCK_M, BLOCK_K), dtype)
             B_shared = T.alloc_shared((BLOCK_K, BLOCK_N), dtype)
             C_local = T.alloc_fragment((BLOCK_M, BLOCK_N), accum_dtype)   # 累加器住在寄存器

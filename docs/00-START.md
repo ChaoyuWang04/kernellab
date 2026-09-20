@@ -139,6 +139,8 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 - 用了 `tl.make_tensor_descriptor` 的 kernel 需要宿主侧 `triton.set_allocator(...)`,否则运行期报 "no allocator was set"。接线里一直开着,不用的级别不占内存。
 - 5090 是消费卡,持续满载的大 GEMM(如 8192³)会降频,bench 的 p10 可能只有中位数的一半。这一档的绝对值不可比,只能和同时段的 torch 比。A100 没有这个问题。
 - `klab probe` 的 `peak_tflops_fp16` 是用固定配置测的,会低于真实可达上限(A100 上 probe 测 241,autotune 后的 triton matmul 到 257.9)。峰值应该填「见过的最好成绩」,否则 %峰值 会超过 100%。
+- TileLang 的 `tilelang.jit(out_idx=[-1])` 会自己分配输出;split-K 需要接线预先清零并传进去,这时**不能标 `out_idx`**,否则报 "Kernel expected 2 inputs, but 3 are provided"。
+- TileLang 的共享内存超限报 `Failed to set the allowed dynamic shared memory size to N`,N 就是它要的字节数。5090 上限 101376,H100 是 228 KB。
 - TileLang 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`。写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。
 - ThunderKittens:sm_90 起要 `compute_XXa` 架构目标;宏 `KITTENS_SM<xx>` 只能定义一个;`gl` 的编译期维度要传 `nullptr`,用 `make_gl<GL>(ptr, b, d, r, c)` 省事;`warpid()` 在 `kittens::` 命名空间。
 - TK 调 CUDA driver API,**必须显式 `-lcuda`**,否则编译通过、导入时才报 `undefined symbol: cuGetErrorString`。`cppext` 在 `tk=True` 时自动加。
