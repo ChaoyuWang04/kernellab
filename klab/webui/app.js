@@ -8,6 +8,7 @@ let impl = null;         // 当前实现(= specs/<名>,决定语言与工具链)
 let editor = null;       // Monaco 实例
 let busy = false;
 let saveTimer = null;
+let loading = false;      // 正在程序化换内容,别当成用户编辑
 
 // ---------------------------------------------------------------- Monaco
 
@@ -81,6 +82,7 @@ function initEditor() {
         tabSize: 4, renderWhitespace: 'selection', padding: {top: 10},
       });
       editor.onDidChangeModelContent(() => {
+        if (loading) return;                 // setCode() 灌进去的,不是用户敲的
         $('saved').textContent = '未保存';
         clearTimeout(saveTimer);
         saveTimer = setTimeout(save, 900);
@@ -101,6 +103,11 @@ function code() {
 }
 
 function setCode(text, language) {
+  loading = true;                            // setValue 会同步触发 onDidChangeModelContent
+  try { setCodeInner(text, language); } finally { loading = false; }
+}
+
+function setCodeInner(text, language) {
   if (editor) {
     monaco.editor.setModelLanguage(editor.getModel(), language);
     editor.setValue(text);
@@ -343,18 +350,21 @@ function solAnswer() {
       <button class="seg ${solView === 'diff' ? 'on' : ''}" data-view="diff"
               ${prev ? `title="和「${esc(prev.title)}」比"` : 'disabled title="这是第 0 级,没有上一级"'}>与上一级的差异</button>
       <div class="spacer"></div>
-      <button class="ghost tiny" id="sol-load" title="覆盖右边的编辑器">载入编辑器</button>
+      <button class="ghost tiny" id="sol-copy" title="复制到剪贴板,右边的代码不动">⧉ 复制代码</button>
     </div>
     ${solView === 'diff' && prev ? `<p class="hint">和「${esc(prev.title)}」比,只比代码 —— 开头那段讲解每级都重写,比了全是噪音。</p>` : ''}
     <div id="sol-body"></div>`;
   box.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
     if (!b.disabled) { solView = b.dataset.view; solAnswer(); }
   });
-  $('sol-load').onclick = () => {
-    if (busy) return;
-    if (confirm(`把「${s.title}」载入右边的编辑器?你现在写的代码会被覆盖。`)) {
-      setCode(s.code, impl.language); save();
-    }
+  /* 故意不提供「载入编辑器」:右边是你自己写的地方,答案不该出现在那里。
+     要拿某一级当起点,复制过去是显式的一步,覆盖与否由你决定。 */
+  $('sol-copy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(s.code);
+      $('sol-copy').textContent = '✓ 已复制';
+      setTimeout(() => { const b = $('sol-copy'); if (b) b.textContent = '⧉ 复制代码'; }, 1400);
+    } catch { alert('浏览器不给复制权限,直接在下面选中复制吧。'); }
   };
   const body = $('sol-body');
   if (typeof monaco === 'undefined') {           // 没 vendor 到 Monaco 时的退路
