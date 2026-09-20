@@ -48,3 +48,15 @@ peak_gbps = 2039             # A100 80GB SXM HBM2e 公开规格(klab probe 实�
 peak_tflops_fp16 = 258       # 2026-09-19 实测可达上限:autotune 后的 triton matmul 4096³ 到 257.9
                              # (klab probe 只测到 241,它用的是固定配置;公开规格 312 dense)
 peak_tflops_fp32 = 19.5
+
+# 数据中心 Blackwell。sm_100:第五代 tensor core(tcgen05)+ tmem,累加器搬出寄存器。
+# 这是 ARCH_FEATURES 里唯一一行此前没有真卡验证过的。
+[targets.modal-b200]
+kind = "modal"
+gpu = "B200"
+root = "/root/klab"
+api_proxy = "http://127.0.0.1:3213"
+ncu_clock_control = "none"
+peak_gbps = 8000             # B200 HBM3e 公开规格(klab probe 实测拷贝 6184)
+peak_tflops_fp16 = 1520      # klab probe 2026-09-20 实测 8192³ bf16 matmul 1520 TFLOPS(公开规格 2250 dense)
+peak_tflops_fp32 = 80

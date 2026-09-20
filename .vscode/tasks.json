@@ -5,7 +5,7 @@
       "id": "target",
       "type": "pickString",
       "description": "执行后端",
-      "options": ["5090home", "modal-h100", "modal-a100"],
+      "options": ["5090home", "modal-a100", "modal-h100", "modal-b200"],
       "default": "5090home"
     }
   ],

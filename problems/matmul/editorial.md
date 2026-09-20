@@ -94,16 +94,38 @@ Triton 里写 `tl.dot(a, b)` 就够,降到哪条指令由目标架构决定。**
 
 **体检单**:「切成多少块」那行会直接告诉你最后一波用掉几成位置、浪费多少时间。注意 3.01 波比 3.98 波糟得多 —— 小数部分越小,尾波越空。
 
-## 8. 换代:Hopper 与 Blackwell
+## 8. 换代:同一份代码在四张卡上降成什么
 
-| 特性 | 架构 | 换来什么 |
-|---|---|---|
-| `wgmma` | sm_90 | 异步 warpgroup MMA,发一条指令算一大块,发射开销摊薄 |
-| TMA (`cp.async.bulk`) | sm_90 | 硬件做地址计算的批量异步拷贝,省掉一大堆整数指令 |
-| warp specialization | sm_90 | 一部分 warp 专职搬数、一部分专职算,生产者消费者分离 |
-| `tcgen05` + tmem | sm_100 | 第五代 tensor core,累加器搬到专用内存,不再挤寄存器 |
+先看一个实测结果。**把第 0 级那份 65 行、一个字没改的 Triton 代码**,拿 `klab ptx` 在四张卡上各打一遍:
 
-这几条 5090 都没有(sm_120 不是 sm_90 的超集),要练得换到 `modal-h100`。`meta.toml` 的 `requires.features` 会在跑之前就拦住不匹配的组合。
+| 卡 | 架构 | tensor core 指令 | 异步拷贝 | 其他 |
+|---|---|---|---|---|
+| A100 | sm_80 | `mma.sync`×64 | `cp.async`×35 | `ldmatrix`×24 |
+| 5090 | sm_120 | `mma.sync`×64 | `cp.async`×32 | `ldmatrix`×16, `stmatrix`×16 |
+| H100 | sm_90 | **`wgmma`×8** | `cp.async`×32 | `ldmatrix`×16 |
+| B200 | sm_100 | **`tcgen05`×13** | `cp.async`×43 | `mbarrier`×6 |
+
+一行没改,`tl.dot` 自己变成了三种不同的指令。`wgmma`×8 对 `mma.sync`×64 —— 一条 warpgroup 指令顶八条,发射开销直接摊薄八倍。这是 Triton / TileLang 这类 DSL 最大的价值:**换代不用重写**。
+
+| 特性 | 最低架构 | 换来什么 | 怎么验 |
+|---|---|---|---|
+| `mma.sync` | sm_80 | warp 级同步 MMA | `klab ptx` |
+| TMA (`cp.async.bulk`) | sm_90 | 硬件做地址计算与越界补零的批量异步拷贝,省掉大量整数指令 | 同上 |
+| `wgmma` | sm_90 | warpgroup 级异步 MMA,一条顶八条 | 同上 |
+| warp specialization (`setmaxnreg`) | sm_90 | 一部分 warp 专职搬数、一部分专职算 | 同上 |
+| `tcgen05` + tmem | sm_100 | 第五代 tensor core,累加器住进专用内存,不再挤寄存器 | 同上 |
+
+注意 **cc 数字不是超集关系**:5090 是 sm_120,数字最大,却没有 Hopper 的 `wgmma`;但它**有 TMA**。`meta.toml` 的 `requires.features` 就是按这张表拦不匹配的组合。
+
+### 显式用某一代的特性:见参考答案 `5-tma`
+
+上面是「编译器替你换代」。想**显式**用某代特性,Triton 也给了 API —— `tl.make_tensor_descriptor` 就是 TMA。那一级实测出一件很要紧的事:
+
+**在 A100(sm_80,没有 TMA 硬件)上,那份代码不报错、不变慢,它只是被静默降级成了普通 `cp.async`。**
+
+代码照跑、结果照对,你完全看不出来。所以:
+
+> **「我写了 TMA」和「硬件真的用了 TMA」是两件必须分开验的事。** 体检单只说 tensor core 忙到几成,不说走的是哪条指令 —— 这就是 `klab ptx` 存在的唯一理由。
 
 ## 9. 别自己猜:autotune
 

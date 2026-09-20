@@ -134,7 +134,9 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 
 **架构与工具链**
 
-- 5090 是 sm_120:没有 wgmma / tcgen05,**但有 TMA**(`klab ptx` 实测 TileLang 在它上面发 `cp.async.bulk.tensor`)。共享内存上限 101376 字节,170 个 SM。`ARCH_FEATURES` 按 major 版本给特性,**cc 数字不是超集关系**。
+- 四张卡的实测指令画像(同一份 Triton 代码,`klab ptx`):A100 sm_80 → `mma.sync`+`cp.async`;5090 sm_120 → `mma.sync`+TMA;H100 sm_90 → `wgmma`+TMA;B200 sm_100 → `tcgen05`+TMA。**cc 数字不是超集关系**,5090 数字最大却没有 `wgmma`。
+- **Triton 的 TMA API(`tl.make_tensor_descriptor`)在 sm_80 上会静默降级成普通 `cp.async`** —— 不报错、不变慢,只是不是 TMA。所以「用了 API」必须用 `klab ptx` 验成「硬件真的用了」。
+- 用了 `tl.make_tensor_descriptor` 的 kernel 需要宿主侧 `triton.set_allocator(...)`,否则运行期报 "no allocator was set"。接线里一直开着,不用的级别不占内存。
 - 5090 是消费卡,持续满载的大 GEMM(如 8192³)会降频,bench 的 p10 可能只有中位数的一半。这一档的绝对值不可比,只能和同时段的 torch 比。A100 没有这个问题。
 - `klab probe` 的 `peak_tflops_fp16` 是用固定配置测的,会低于真实可达上限(A100 上 probe 测 241,autotune 后的 triton matmul 到 257.9)。峰值应该填「见过的最好成绩」,否则 %峰值 会超过 100%。
 - TileLang 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`。写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。

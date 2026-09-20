@@ -7,9 +7,10 @@ Mac 上写算子,远端 GPU 上编译、跑、测速、NCU。执行后端可插�
 本文面向使用。agent 的操作流程在 **[docs/01-AGENT-PLAYBOOK.md](docs/01-AGENT-PLAYBOOK.md)**,维护与扩展看 **[docs/00-START.md](docs/00-START.md)**。本地测试:`uv run pytest`。
 
 ```text
-Mac 浏览器/CLI ── klab ──┬── ssh:5090home   (home lab,RTX 5090 / sm_120)
-                         ├── modal-a100     (Modal,A100-80GB / sm_80,真·安培)
-                         ├── modal-h100     (Modal,H100 / sm_90;gpu 字段可换 B200 等)
+Mac 浏览器/CLI ── klab ──┬── ssh:5090home   (home lab,RTX 5090 / sm_120 消费级 Blackwell)
+                         ├── modal-a100     (Modal,A100-80GB / sm_80  Ampere)
+                         ├── modal-h100     (Modal,H100      / sm_90  Hopper)
+                         ├── modal-b200     (Modal,B200      / sm_100 数据中心 Blackwell)
                          ├── ssh:<租的机器> (vast / runpod / autodl,同一套 SshTarget)
                          └── local          (在 GPU 盒子上调试 harness 自己用)
 ```
@@ -96,7 +97,16 @@ specs/<名>/baselines/       klab baseline 钉下的基线
 | `reference(**inputs) -> Tensor` | 同 dtype 的原生 torch 调用;check 用它比对,bench 用它当「相对 torch」标尺 |
 | `workload(case, **inputs) -> {flops, bytes}` | 按数学定义换算 TFLOPS 与 GB/s |
 
-`meta.toml` 的 `requires.features` 是架构门禁:5090 是 sm_120,没有 wgmma / tcgen05(但**有 TMA**,`klab ptx` 实测),声明了缺失特性的算子打 5090 会被拒并提示换 target。
+`meta.toml` 的 `requires.features` 是架构门禁。四张卡的实测画像(同一份 Triton 代码,`klab ptx` 打出来):
+
+| 卡 | 架构 | tensor core | 异步拷贝 |
+|---|---|---|---|
+| A100 | sm_80 | `mma.sync` | `cp.async` |
+| 5090 | sm_120 | `mma.sync` | `cp.async` + **TMA** |
+| H100 | sm_90 | **`wgmma`** | `cp.async` + TMA |
+| B200 | sm_100 | **`tcgen05`** | `cp.async` + TMA |
+
+**cc 数字不是超集关系**:5090 数字最大却没有 `wgmma`。声明了缺失特性的算子打上去会被拒并提示换 target。
 
 题面、优化路线与各语言骨架在 `problems/<题>/`,由 `meta.toml` 的 `problem` 键关联:
 

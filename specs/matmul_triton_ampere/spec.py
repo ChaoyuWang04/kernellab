@@ -18,6 +18,15 @@ k = kernel_module(__file__)
 torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
 
 
+def _tma_scratch(size: int, align: int, stream):
+    # TMA 的设备端描述符要一块 scratch,Triton 要求宿主侧注册一个分配器。
+    # 只有用了 tl.make_tensor_descriptor 的那一级才会真的来要,其余级别一个字节都不占。
+    return torch.empty(size, dtype=torch.int8, device="cuda")
+
+
+triton.set_allocator(_tma_scratch)
+
+
 def make_inputs(case, device):
     m, n, kk = int(case["m"]), int(case["n"]), int(case["k"])
     dtype = getattr(torch, case.get("dtype", "bfloat16"))
