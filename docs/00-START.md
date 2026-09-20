@@ -156,6 +156,7 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 **NCU / 报告**
 
 - 5090 上 ncu 报带宽用 `Tbyte/s`,H100 用 `Gbyte/s`,`kreport._gbps()` 统一。
+- **bench 的 GB/s / %BW 是「有效带宽」**:`workload()` 的数学最小字节数 ÷ 时间。工作集被缓存吃下时会严重高估(smallK 那档报 1689 GB/s,NCU 看显存只有 3%)。要真实显存流量就看体检单的「显存」那一行,别拿 %BW 当结论。
 - ncu 对超出默认 carveout 的动态共享内存,`launch__occupancy_limit_shared_mem` 报 0,不能当限制因子。
 
 **面板**

@@ -125,7 +125,9 @@ problems/<题>/solutions/<工具链>/N-名字.py   参考答案第 N 级;docstri
 
 预热 → 每次迭代前用 256 MB 的写把 L2 冲干净 → CUDA event 计时 → 取中位数与 p10/p90 → 按 `workload()` 换算带宽与算力 → 对 `targets.toml` 里的峰值算百分比 → **同样方法给 `reference()` 计时,报「相对 torch」的倍数**(大于 1 是比 torch 快)。`--no-flush` 关掉 L2 冲刷(看热缓存表现),`--iters/--warmup` 调次数。
 
-`peak_*` 是手填的参考值:`peak_gbps` 取公开规格,`peak_tflops_fp16` 取 `klab probe` 实测的 matmul 吞吐。
+`peak_*` 是手填的参考值:`peak_gbps` 取公开规格,`peak_tflops_fp16` 填**见过的最好成绩**(`klab probe` 用固定配置,常低于真实可达上限 —— A100 上 probe 测 241,autotune 后的 triton matmul 到 258)。
+
+**GB/s 与 %BW 是「有效带宽」,不是显存带宽。** 它按 `workload()` 声明的**数学最小字节数**除以时间算,所以工作集能被缓存吃下时会严重高估:`smallK` 那档 bench 报 1689 GB/s(94%),而 NCU 看显存只有 3% —— 34.6 MB 的工作集整个住在 5090 的 96 MB L2 里。真实显存流量看体检单的「显存」那一行。
 
 ## NCU
 
