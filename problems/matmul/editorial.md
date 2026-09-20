@@ -190,7 +190,14 @@ H100 实测,同一张卡上并排:**手写 WMMA 43.72 TFLOPS → 改 CUTLASS 参
 | **autotune** | `4-autotune` | `4-autotune` | — | — | — |
 | **显式用 TMA** | `5-tma` | — | (CUTLASS 自带) | — | `2-hopper-tma` |
 | **换代到 Hopper** | (自动) | (自动) | **`6-cutlass-hopper`** | ⬜ | **`1-hopper-wgmma`** |
-| **换代到 Blackwell** | (自动) | ⚠️ 退回 mma.sync | ⬜ | ⬜ | **`3-blackwell-tcgen05`** |
+| **换代到 Blackwell** | (自动) | ⚠️ 退回 mma.sync | **`7-cutlass-blackwell`** | ⬜ | **`3-blackwell-tcgen05`** |
+| **warp specialization** | — | (TileLang 自动做) | (CUTLASS 自带) | — | **`4-blackwell-warpspec`** / `2b`(负结果) |
+| **epilogue 流水** | — | — | (CUTLASS 自带) | — | **`5-blackwell-epilogue`** |
+| **多 CTA cluster** | — | — | (CUTLASS 自带) | — | **`6-blackwell-cluster`** |
+
+最后三行是「用上新硬件」到「喂饱新硬件」之间的那道坎。tk 那一列把它拆成三级量了出来:
+**295 → 710 → 1057 → 1356 TFLOPS(B200)**;cuda 那一列则是「CUTLASS 里本来就全在」——
+改四行参数直接 1388。两条路都走一遍,你会同时知道差距由什么构成、以及工业级实现长什么样。
 
 「(自动)」= 代码一个字不改,编译器按目标卡选指令,我们的活只是用 `klab ptx` 去量。
 「⬜」= 还没写。cute 的两格卡在一个未解的问题上,半成品在 `problems/matmul/wip/`;

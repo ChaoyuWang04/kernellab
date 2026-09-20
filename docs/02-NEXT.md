@@ -4,38 +4,43 @@
 
 ## 一、现在到哪了
 
-一道题(matmul)、五种语言、四张卡、六档形状。**参考答案 25 份,全部上机验证过。**
-
-**轴一 · 主线阶梯**(与架构无关的旋钮)
+一道题(matmul)、五种语言、四张卡、六档形状。**参考答案 30 份,全部上机验证过。**
 
 | 语言 | 级数 | 内容 |
 |---|---|---|
-| cuda | 7 | naive → coalesce → smem → regtile → doublebuf → tensorcore → **cutlass-hopper** |
+| cuda | 8 | naive → coalesce → smem → regtile → doublebuf → tensorcore → cutlass-hopper → cutlass-blackwell |
+| tk | 8 | tiles → hopper-wgmma → hopper-tma →(2b-warpspec,负结果)→ blackwell: tcgen05 → warpspec → epilogue → cluster |
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
-| tilelang | 5 | naive → swizzle → tiles → splitk → **autotune** |
-| tk | 4 | tiles → **hopper-wgmma** → **hopper-tma** → **blackwell-tcgen05** |
-| cute | 3 | naive → **atom** → **tiledcopy** |
+| tilelang | 5 | naive → swizzle → tiles → splitk → autotune |
+| cute | 3 | naive → atom → tiledcopy |
 
-**轴二 · 换代**(Ampere → Hopper → Blackwell)
+**换代矩阵 15 格,13 格有答案。** 空着的两格是 cute 的 Hopper / Blackwell,卡在同一个未解问题上
+(半成品在 `problems/matmul/wip/`,见第 2 项)。
 
-| 语言 | Ampere | Hopper | Blackwell | 性质 |
+### 最值钱的两条完整阶梯
+
+**B200 上,tk 一级一级爬到 cuBLAS 边上:**
+
+| | 做了什么 | TFLOPS | ×torch | 本级增益 |
 |---|---|---|---|---|
-| triton | ✅ | ✅ | ✅ | 自动,已四卡实测 |
-| tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
-| tk | ✅ | ✅ | ✅ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
-| cuda | ✅ | ✅ | ⬜ | WMMA 只到 Ampere,再往上改 CUTLASS 参数;Blackwell 只要把 `Sm90` 换 `Sm100` |
-| cute | ✅ | ❌ | ❌ | **半成品在 `problems/matmul/wip/`,见第 2 项** |
+| `0-tiles` | mma.sync | 170.98 | 0.11× | — |
+| `3-blackwell-tcgen05` | 换上 tcgen05 | 294.98 | 0.20× | 1.7× |
+| `4-blackwell-warpspec` | 搬算分家 | 710.32 | 0.46× | 2.4× |
+| `5-blackwell-epilogue` | 写回也流水 | 1056.83 | 0.70× | 1.5× |
+| `6-blackwell-cluster` | 两个 block 合伙 | **1355.73** | **0.91×** | 1.3× |
 
-**15 个格子里 12 个有答案。** 剩下的三个:cute 的 Hopper / Blackwell(同一个未解的问题),
-以及 cuda × Blackwell(照着 cuda×Hopper 改一行架构标签即可,没做只是因为还没轮到)。
+**换指令只值 1.7 倍,后面「怎么喂」的三级合起来值 4.6 倍。** 8192³ 上这一级到 1614.65 TFLOPS,**0.99× cuBLAS**。
 
-**最值得看的三组数字**(都是同卡对照):
+**同一张 B200,CUTLASS 改四行参数直接就在那儿:** `cuda/7-cutlass-blackwell` = 1387.71 TFLOPS(0.92×)。
+两条路都该走 —— 一条告诉你那 4.6 倍由什么构成,一条告诉你工业级实现长什么样。
 
-| | 从 | 到 | |
-|---|---|---|---|
-| cute × 5090 | 3.86 TFLOPS | 41.7 TFLOPS | 换 atom + 换 TiledCopy |
-| tk × H100 | 132 TFLOPS | 319.5 TFLOPS | 换 warpgroup + TMA 双缓冲 |
-| cuda × H100 | 43.7 TFLOPS | **482.2 TFLOPS** | **一行 kernel 没写,只改三行 CUTLASS 参数** |
+### 三条反例(阶梯不是单调的)
+
+- **`tk/2b-hopper-warpspec`**:照抄官方 educational_h100,**慢 3.5 倍**。体检单:寄存器溢出 3564 万次、
+  共享内存 232.6 KB 让每 SM 只放 1 块。信号事后很明显 —— b200 的 README 每级都标 TFLOPs,h100 的一个都没有。
+- **`deepK` 在 B200 阶梯上一路 30 → 68 → 63 → 48**:每一级都在把分块开大,而它 M/N 只有 512,
+  到最后只切出 4 个 block(B200 有 148 个 SM)。
+- **`smallK` 从 `2-hopper-tma` 起就钉在 72–84 TFLOPS**:K=64 只有一轮 K 循环,流水/预取/分工全部失效。
 
 ## 二、待办清单
 
