@@ -134,18 +134,16 @@ def _from_cppext(spec, mod) -> dict[str, str]:
     """
     import subprocess
 
-    import torch
+    # 精确定位:cppext 编译时把构建目录记在 LAST_BUILD 里。不要按 glob 猜 ——
+    # 同一张卡上每份源码一个目录,靠时间戳挑会取到上一个答案的产物(缓存命中时不产生新文件)。
+    from klab.harness import cppext
 
-    # 只认**当前这张卡**的产物。Modal 把编译缓存挂在共享 Volume 上,`{名}-*` 通配会把
-    # 别的架构(比如上次在 H100 上编的 sm_90a)一起捞进来,而它们的 .so 同名,
-    # 后读到的会把本次的覆盖掉 —— 于是在 B200 上打 PTX 却报出 wgmma。
-    major, minor = torch.cuda.get_device_capability(0)
-    cache = Path(os.path.expanduser("~/.cache/klab"))
-    dirs = [cache / f"{spec.name}-sm_{major}{minor}{suf}" for suf in ("a", "")]
-    sos = sorted(p for d in dirs if d.is_dir() for p in d.glob("*.so"))
+    build = cppext.LAST_BUILD.get(spec.name)
+    sos = sorted(build.glob("*.so")) if build and build.is_dir() else []
     if not sos:
         raise SystemExit(
-            f"{cache}/{spec.name}-sm_{major}{minor}[a]/ 下没有编译产物:先在这张卡上跑一次 klab check"
+            f"没找到 {spec.name} 的编译产物(cppext.LAST_BUILD={build}):"
+            "klab ptx 会自己跑一次算子触发编译,走到这里说明 spec.py 没用 load_extension"
         )
     out: dict[str, str] = {}
     for so in sos:

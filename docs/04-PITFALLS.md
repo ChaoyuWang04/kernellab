@@ -33,6 +33,11 @@
 - 每种工具链取 PTX 的办法都不一样:triton 读 `JITFunction.device_caches` 里的 `asm['ptx']`;tilelang 用 `JITKernel._get_ptx()`;cuda / tk 用 `cuobjdump -ptx` 抠 `.so`;cute 靠环境变量 `CUTE_DSL_KEEP=ptx`,**且必须在 `import cutlass` 之前设**(见 [D10](03-DECISIONS.md#d10-cute-的-ptx-怎么取2026-09-20-解决))。
 - Triton 3.8 的编译缓存是 `JITFunction.device_caches`(旧版叫 `cache`),device → tuple → dict 嵌套,层级各版本不同;`ptxdump._walk()` 按容器递归找叶子,不写死结构。
 
+**cppext(cuda / tk 的现场编译)**
+
+- **构建目录必须带源码内容的哈希**。早期只用 `<算子>-<架构>`,而 Modal 用 `add_local_dir` 挂载仓库、文件 mtime 不随编辑变化,ninja 于是认为没改动、直接复用 Volume 上旧的 `.so` —— **你改了代码,跑的还是上一版,一声不吭**。这个坑吃掉了一整轮调试:printf 无条件放在函数最前面都不打印,才反应过来跑的不是当前代码。
+- **`klab ptx` 不要按 glob + 时间戳去找 `.so`**。每份源码一个构建目录,缓存命中时不产生新文件,时间戳会指向上一个答案的产物。`cppext.LAST_BUILD[name]` 记着本进程这次用的目录,精确定位。
+
 ## 工具链
 
 **TileLang**

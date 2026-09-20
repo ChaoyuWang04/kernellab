@@ -2,3 +2,7 @@
 numpy
 ninja
 pybind11
+# CUTLASS 的 C++ 头。裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),
+# NVIDIA 自己的答案就是用 CUTLASS —— 参考答案里「改 CUTLASS 的参数」那几级要它。
+# 只装头文件,不编译任何东西;cppext 通过 cutlass_includes() 找到路径。
+nvidia-cutlass

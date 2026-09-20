@@ -13,7 +13,7 @@
 | 语言 | 级数 | 内容 |
 |---|---|---|
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
-| cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
+| cuda | **7** | …→ tensorcore(WMMA) → cutlass-hopper(2026-09-20) |
 | tilelang | **5** | naive → swizzle → tiles → splitk → autotune(2026-09-20) |
 | cute | **3** | naive → atom → tiledcopy(2026-09-20) |
 | tk | **4** | tiles → hopper-wgmma → hopper-tma → blackwell-tcgen05(2026-09-20) |
@@ -26,7 +26,7 @@
 | tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
 | tk | ✅ | ✅ | ✅ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
 | cute | ✅ | ❌ | ❌ | 换命名空间(`warp` → `warpgroup` → `tcgen05`) |
-| cuda | ✅ | ❌ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
+| cuda | ✅ | ✅ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
 
 **轴二前两行是白送的** —— 代码一个字不改,我们的活只是去量。**后三行才要动手**,而且动手的量都不大:换名字、换积木、改参数。
 
@@ -98,13 +98,20 @@ cosize 又说共享内存没空洞)。下次接手从那儿开始,不要从零�
 
 atom 名字长这样 —— `SM90_64x128x16_F32BF16BF16_SS`:Hopper 的 / 一条指令算 64×128×16 / 累加 fp32 输入 bf16 / 两个输入都从共享内存来。**挑中它,发哪条 `wgmma`、描述符怎么编码、数据怎么摆,全在这块积木里。**
 
-### 5. cuda × Hopper+:改 CUTLASS 的参数
+### ~~5. cuda × Hopper+:改 CUTLASS 的参数~~ ✅ 2026-09-20
 
-**不手写 wgmma。** 裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的答案就是 CUTLASS。这一格的练法是:拿一个 CUTLASS GEMM,改它的 **tile 形状 / schedule / atom**,然后量。
+`problems/matmul/solutions/cuda/6-cutlass-hopper.cu`。**这一格是「学优化不是学手搓」那条原则的最好例证**:
+一行 kernel 代码没写,只填了三行模板参数(TileShape / ClusterShape / KernelSchedule),
+H100 上从手写 WMMA 的 43.72 TFLOPS 到 **482.15 TFLOPS,快 11 倍**,六档全过。
 
-**这一项是唯一需要动 `envs/` 的** —— 现在 `envs/cuda/requirements.txt` 里只有 `numpy / ninja / pybind11`,CUTLASS 的 C++ 头还没弄到后端去。
+`klab ptx`:`wmma.mma×8`(Ampere)→ `wgmma×14 + cp.async.bulk×3 + mbarrier×32 + setmaxnreg×2`(Hopper)。
+三样 Hopper 特性一次到齐,全是 `CollectiveBuilder` 推出来的。
 
-现有的 cuda 阶梯到 `5-tensorcore`(WMMA)为止,那是 Ampere 的官方封装;**WMMA 不覆盖 Hopper 之后,这一点要在阶梯里写明** —— 这本身就是一条该学的结论。
+**基建**:`envs/cuda/requirements.txt` 加了 `nvidia-cutlass`(只要 C++ 头,pip 装,不用 git clone);
+`cppext.load_extension(..., cutlass=True)` 负责 include 路径与 `compute_90a`;
+`specs/matmul_cuda/meta.toml` 的 `kernel_regex` 扩成 `matmul_kernel|device_kernel`。
+
+**还能往下走**:Blackwell 只要把 `cutlass::arch::Sm90` 换成 `Sm100`、TileShape/ClusterShape 调一下。
 
 ### 6. 补厚主线阶梯
 

@@ -16,7 +16,8 @@ torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
 def _mod():
     global _ext
     if _ext is None:
-        _ext = load_extension("matmul_cuda", __file__, sources=["kernel.cu"], spec_sources=["binding.cu"])
+        _ext = load_extension("matmul_cuda", __file__, sources=["kernel.cu"],
+                              spec_sources=["binding.cu"], cutlass=True)
     return _ext
 
 

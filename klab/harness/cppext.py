@@ -10,6 +10,11 @@ import os
 from pathlib import Path
 
 
+# 本进程最近一次编译用的构建目录,按算子名记。klab ptx 靠它精确定位 .so ——
+# 按 glob + 时间戳去猜会取到别的答案的产物(缓存命中时不产生新文件,时间戳骗人)。
+LAST_BUILD: dict[str, Path] = {}
+
+
 def _arch() -> tuple[int, int]:
     import torch  # 只在后端有;本地 pytest 只用 tk_macro 这类纯函数
 
@@ -32,7 +37,26 @@ def tk_macro(major: int, minor: int) -> str:
     return "KITTENS_SM80"
 
 
+def cutlass_includes() -> list[str]:
+    """CUTLASS 的 C++ 头。随 pip 包 `nvidia-cutlass` 装进 site-packages,不用 git clone。
+
+    裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的
+    答案就是用 CUTLASS —— 参考答案里「改 CUTLASS 的参数」那几级要这些头。
+    """
+    try:
+        import cutlass_library
+    except ImportError:
+        raise SystemExit("没装 CUTLASS:在该后端跑一次 klab setup --toolchain cuda(envs/cuda 里有 nvidia-cutlass)")
+    root = Path(cutlass_library.__file__).resolve().parent / "source"
+    paths = [root / "include", root / "tools" / "util" / "include"]
+    missing = [p for p in paths if not p.is_dir()]
+    if missing:
+        raise SystemExit(f"CUTLASS 头不完整,缺:{missing}")
+    return [str(p) for p in paths]
+
+
 def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = False,
+                   cutlass: bool = False,
                    extra_cuda_cflags: list[str] | None = None, spec_sources: list[str] | None = None):
     """从 specs/<名>/spec.py 调用:编译 kernels/<名>/ 下的 sources。
 
@@ -48,10 +72,9 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
         sources = [str(over)] + list(sources[1:])
     major, minor = _arch()
     arch = f"sm_{major}{minor}"
-    build = Path(os.path.expanduser(f"~/.cache/klab/{name}-{arch}"))
-    build.mkdir(parents=True, exist_ok=True)
     # TK 在 sm_90 及以后要求架构专属特性集(compute_90a / 120a 那种带 a 的),裸 CUDA 也一并用它,不损失什么
-    suffix = "a" if (tk and major >= 9) else ""
+    # TK 与 CUTLASS 在 sm_90 及以后都要求架构专属特性集(compute_90a 那种带 a 的)
+    suffix = "a" if ((tk or cutlass) and major >= 9) else ""
     cflags = ["-O3", "-std=c++20", "--use_fast_math", "--expt-relaxed-constexpr", "--expt-extended-lambda",
               # code 同时给 sm_(SASS)与 compute_(PTX):不嵌 PTX 的话 klab ptx 用 cuobjdump 什么也抠不出来
               f"-gencode=arch=compute_{major}{minor}{suffix},code=[sm_{major}{minor}{suffix},compute_{major}{minor}{suffix}]",
@@ -64,7 +87,26 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
         includes += [f"{root}/include", f"{root}/prototype"]
         cflags += [f"-D{tk_macro(major, minor)}", "-DNDEBUG", "-forward-unknown-to-host-compiler",
                    "-Xcompiler=-Wno-psabi", "-Xcompiler=-fno-strict-aliasing", "-ftemplate-backtrace-limit=0"]
+    if cutlass:
+        includes += cutlass_includes()
+        cflags += ["-DCUTLASS_ENABLE_TENSOR_CORE_MMA=1", "--expt-relaxed-constexpr"]
     cflags += extra_cuda_cflags or []
+    # 构建目录带上源码内容的哈希。**不能只按名字+架构缓存**:Modal 用 add_local_dir 挂载仓库,
+    # 文件 mtime 不随编辑变化,ninja 于是认为没改动、直接复用 Volume 上旧的 .so ——
+    # 表现是「你改了代码,跑的还是上一版」,而且一声不吭。按内容哈希就不会再骗人。
+    import hashlib
+
+    src_paths = [kdir / s for s in sources] + [sdir / s for s in (spec_sources or [])]
+    if over:
+        src_paths[0] = over
+    h = hashlib.sha256()
+    for sp in src_paths:
+        h.update(Path(sp).read_bytes())
+    h.update(" ".join(cflags).encode())
+    build = Path(os.path.expanduser(f"~/.cache/klab/{name}-{arch}-{h.hexdigest()[:8]}"))
+    build.mkdir(parents=True, exist_ok=True)
+    LAST_BUILD[name] = build
+
     from torch.utils.cpp_extension import load
 
     # TK 调 CUDA driver API(cuGetErrorString 等),要显式链 libcuda,否则导入时才报 undefined symbol

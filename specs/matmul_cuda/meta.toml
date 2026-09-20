@@ -1,7 +1,8 @@
 name = "matmul_cuda"
 problem = "matmul"          # 与 matmul_triton_ampere / matmul_tilelang 同一道题
 toolchain = "cuda"
-kernel_regex = "matmul_kernel"
+# 手写的那几级叫 matmul_kernel;走 CUTLASS 的那一级,kernel 是库里的 cutlass::device_kernel
+kernel_regex = "matmul_kernel|device_kernel"
 
 [requires]
 min_cc = 8.0
