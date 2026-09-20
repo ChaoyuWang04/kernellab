@@ -4,19 +4,17 @@
 
 ## 一、现在到哪了
 
-一道题(matmul)、五种语言、四张卡、六档形状,全部上机验证过。参考答案 18 份。
-
-这个矩阵是**两根轴**,完成度差很远:
+一道题(matmul)、五种语言、四张卡、六档形状。**参考答案 25 份,全部上机验证过。**
 
 **轴一 · 主线阶梯**(与架构无关的旋钮)
 
 | 语言 | 级数 | 内容 |
 |---|---|---|
+| cuda | 7 | naive → coalesce → smem → regtile → doublebuf → tensorcore → **cutlass-hopper** |
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
-| cuda | **7** | …→ tensorcore(WMMA) → cutlass-hopper(2026-09-20) |
-| tilelang | **5** | naive → swizzle → tiles → splitk → autotune(2026-09-20) |
-| cute | **3** | naive → atom → tiledcopy(2026-09-20) |
-| tk | **4** | tiles → hopper-wgmma → hopper-tma → blackwell-tcgen05(2026-09-20) |
+| tilelang | 5 | naive → swizzle → tiles → splitk → **autotune** |
+| tk | 4 | tiles → **hopper-wgmma** → **hopper-tma** → **blackwell-tcgen05** |
+| cute | 3 | naive → **atom** → **tiledcopy** |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
 
@@ -25,10 +23,19 @@
 | triton | ✅ | ✅ | ✅ | 自动,已四卡实测 |
 | tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
 | tk | ✅ | ✅ | ✅ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
-| cute | ✅ | ❌ | ❌ | 换命名空间(`warp` → `warpgroup` → `tcgen05`) |
-| cuda | ✅ | ✅ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
+| cuda | ✅ | ✅ | ⬜ | WMMA 只到 Ampere,再往上改 CUTLASS 参数;Blackwell 只要把 `Sm90` 换 `Sm100` |
+| cute | ✅ | ❌ | ❌ | **半成品在 `problems/matmul/wip/`,见第 2 项** |
 
-**轴二前两行是白送的** —— 代码一个字不改,我们的活只是去量。**后三行才要动手**,而且动手的量都不大:换名字、换积木、改参数。
+**15 个格子里 12 个有答案。** 剩下的三个:cute 的 Hopper / Blackwell(同一个未解的问题),
+以及 cuda × Blackwell(照着 cuda×Hopper 改一行架构标签即可,没做只是因为还没轮到)。
+
+**最值得看的三组数字**(都是同卡对照):
+
+| | 从 | 到 | |
+|---|---|---|---|
+| cute × 5090 | 3.86 TFLOPS | 41.7 TFLOPS | 换 atom + 换 TiledCopy |
+| tk × H100 | 132 TFLOPS | 319.5 TFLOPS | 换 warpgroup + TMA 双缓冲 |
+| cuda × H100 | 43.7 TFLOPS | **482.2 TFLOPS** | **一行 kernel 没写,只改三行 CUTLASS 参数** |
 
 ## 二、待办清单
 
