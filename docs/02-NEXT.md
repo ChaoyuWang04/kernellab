@@ -16,7 +16,7 @@
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
 | tilelang | 4 | naive → swizzle → tiles → splitk |
 | cute | **3** | naive → atom → tiledcopy(2026-09-20) |
-| tk | **1** | 只有 `warp::mma_AB` |
+| tk | **2** | tiles → hopper-wgmma(2026-09-20) |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
 
@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | triton | ✅ | ✅ | ✅ | 自动,已四卡实测 |
 | tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
-| tk | ✅ | ❌ | ❌ | 换命名空间 |
+| tk | ✅ | ✅ | ❌ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
 | cute | ✅ | ❌ | ❌ | 换命名空间(`warp` → `warpgroup` → `tcgen05`) |
 | cuda | ✅ | ❌ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
 
@@ -51,17 +51,20 @@
   而 K=777 的尾块跨在向量中间。CUTLASS 的解法是主循环 / 尾块拆两条路 —— 这是 cute 主线下一步。
 - atom 对操作数布局有硬要求:A、B 都必须 K 连续。B 是行主序 (K,N),所以搬进共享内存时要转置成 (N,K)。
 
-### 2. tk × Hopper:`warp::mma_AB` → `warpgroup::mma_AB`
+### ~~2. tk × Hopper~~ ✅ 2026-09-20
 
-**换代最直观的一格** —— 就是换个命名空间,TK 把 wgmma 的协议细节全封好了。
+`problems/matmul/solutions/tk/1-hopper-wgmma.cu`。**整个仓库里换代最干净的一格**:
+四行(两个 `rt_bf` fragment + 两次 `warp::load` + `warp::mma_AB`)变一行
+`warpgroup::mma_AB(acc, As, Bs)`,操作数直接走共享内存描述符。
 
-- 照抄官方示例:`envs/tk/ThunderKittens/kernels/gemm/bf16_h100/bf16_h100_gemm.cu`
-- 关键行:`base_tile = st_bf<64,64>`;累加器 `rt_fl<16, N_BLOCK*64>`;`warpgroup::mma_AB(accum, A_shared, B_shared)` 之后要 `warpgroup::mma_async_wait()`
-- `warpgroup` 就是 `group<4>`(`include/ops/group/group.cuh:115`)
-- wgmma 的操作数**直接从共享内存来**,不用先 `warp::load` 进寄存器 —— 这正是它比 `warp::mma_AB` 强的地方
-- 形状约束在 `include/ops/group/mma/warpgroup.cuh:148` 的 static_assert 里,写之前先读
+H100 实测:`mma.sync×32 / ldmatrix×20` → `wgmma×7 / ldmatrix×0`。**ldmatrix 整族消失**
+就是「不再过寄存器」的直接证据。但速度只涨 3%~21%,**deepK 还倒退 30%** ——
+因为 `mma_async_wait()` 紧跟在 `mma_AB` 后面,把异步硬用成了同步。
 
-**注意**:wgmma 只有 sm_90 有,**5090 上编不过**。docstring 里写明「载入这一级前先把后端切到 `modal-h100`」,并借这个机会讲清楚 `requires.features` 门禁为什么存在。验证:`klab ptx --target modal-h100`,应该看到 `wgmma`。
+**照抄的官方源**:`envs/tk/ThunderKittens/kernels/gemm/educational_h100/`,
+TK 自带 level_01..08 的 Hopper 阶梯,level_05 就是 WGMMA。**后面几级直接往下抄**:
+level_06 = TMA + 双缓冲(正是本级欠的那一课),level_07 = work partitioning,
+level_08 = 多 consumer warpgroup。
 
 ### 3. tk × Blackwell:`tcgen05::mma`
 
