@@ -1,9 +1,10 @@
-"""TileLang × Ampere v0 — 最朴素的矩阵乘基线。
+"""TileLang 矩阵乘。C[M,N] = A[M,K] @ B[K,N],bf16 进、fp32 累加、bf16 出。
 
-TileLang 把「搬到共享内存 → 开流水 → 用 tensor core 乘」写成三句话。
-降到 mma.sync 还是 wgmma 由它按架构自己决定 —— 用 klab ptx 可以确认。
+下面的常量和 gemm() 的签名是你与系统之间的契约:接线按这些常量编译、按这个签名
+拿 prim_func,改了就跑不起来。prim_func 的内容是你的,从头写。
 
-只写 kernel 本体:jit 编译、按形状缓存、启动都由接线做。
+TileLang 不写指针:你声明共享内存 / 寄存器块,用 T.copy 搬、T.gemm 算,
+线程到数据的映射它自己管。
 """
 
 import tilelang.language as T
@@ -16,30 +17,27 @@ NUM_STAGES = 3     # T.Pipelined 的流水级数
 THREADS = 128      # 一个 block 多少线程
 
 
-def gemm(M, N, K, dtype, accum_dtype, out_dtype=None):
-    """返回一个 T.prim_func。M/N/K 是编译期形状:TileLang 按形状特化,一个 case 编一次。
-
-    out_dtype 由接线传:普通情况与输入同 dtype;split-K 时是 fp32(见参考答案 3)。
-    """
-    out_dtype = out_dtype or dtype
+def gemm(M, N, K, dtype, accum_dtype):
+    """返回一个 T.prim_func。M/N/K 是编译期形状:TileLang 按形状特化,一个 case 编一次。"""
 
     @T.prim_func
     def kernel(
         A: T.Tensor((M, K), dtype),
         B: T.Tensor((K, N), dtype),
-        C: T.Tensor((M, N), out_dtype),
+        C: T.Tensor((M, N), dtype),
     ):
-        # 二维 grid:(列块, 行块)。TileLang 自己管线程到数据的映射,不用手写指针
-        with T.Kernel(T.ceildiv(N, BLOCK_N), T.ceildiv(M, BLOCK_M), threads=THREADS) as (bx, by):
-            A_shared = T.alloc_shared((BLOCK_M, BLOCK_K), dtype)
-            B_shared = T.alloc_shared((BLOCK_K, BLOCK_N), dtype)
-            C_local = T.alloc_fragment((BLOCK_M, BLOCK_N), accum_dtype)   # 累加器住在寄存器
+        # ① 开 grid:一个 block 负责 C 的一块 BLOCK_M × BLOCK_N
+        #    with T.Kernel(列块数, 行块数, threads=THREADS) as (bx, by):
 
-            T.clear(C_local)
-            for k in T.Pipelined(T.ceildiv(K, BLOCK_K), num_stages=NUM_STAGES):
-                T.copy(A[by * BLOCK_M, k * BLOCK_K], A_shared)   # 全局 -> 共享(自动 cp.async)
-                T.copy(B[k * BLOCK_K, bx * BLOCK_N], B_shared)
-                T.gemm(A_shared, B_shared, C_local)              # 块乘块,走 tensor core
-            T.copy(C_local, C[by * BLOCK_M, bx * BLOCK_N])       # 写回,自动转 dtype
+        # ② 申请共享内存放 A、B 的 tile,申请 fragment 放累加器(累加器用 accum_dtype)
+
+        # ③ 累加器清零
+
+        # ④ 沿 K 开流水:T.Pipelined(段数, num_stages=NUM_STAGES)
+        #    每段:T.copy 把 A、B 的 tile 搬进共享内存,T.gemm 乘加进累加器
+
+        # ⑤ 写回:T.copy 把累加器搬回 C 的对应块(自动转 dtype)
+
+        pass
 
     return kernel

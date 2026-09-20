@@ -1,7 +1,13 @@
+"""Triton 矩阵乘。C[M,N] = A[M,K] @ B[K,N],bf16 进、fp32 累加、bf16 出。
+
+下面的常量和函数签名是你与系统之间的契约:系统按这些常量算 grid、按这个签名启动,
+改了就跑不起来。函数体是你的,从头写。
+"""
+
 import triton
 import triton.language as tl
 
-# 启动参数。接线读这几个常量去算 grid 并启动,你只管调它们。
+
 BLOCK_M = 128
 BLOCK_N = 128
 BLOCK_K = 32
@@ -12,7 +18,7 @@ NUM_STAGES = 3     # 共享内存流水线深度(Ampere 的 cp.async 多级缓�
 @triton.jit
 def matmul_kernel(
     A_ptr, B_ptr, C_ptr,                 # 三个矩阵的起始地址
-    M, N, K,                             # 形状
+    M, N, K,                             # 形状,运行期传入
     stride_am, stride_ak,                # A 的行跨度、列跨度(行优先时 = K, 1)
     stride_bk, stride_bn,                # B 的(= N, 1)
     stride_cm, stride_cn,                # C 的(= N, 1)
@@ -20,41 +26,18 @@ def matmul_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
 ):
-    # ① 我是谁:grid 是一维的,自己把 pid 换算成「第几个行块、第几个列块」
-    #    这里按行铺,最直白;想提高 L2 命中就改这几行(优化路线第 6 级)
-    pid = tl.program_id(axis=0)
-    num_pid_n = tl.cdiv(N, BLOCK_N)
-    pid_m = pid // num_pid_n
-    pid_n = pid % num_pid_n
+    # ① 我是谁:grid 是一维的,把 pid 换算成「第几个行块、第几个列块」
+    #    (换一种换算方式就是优化路线第 6 级的 L2 swizzle)
 
-    # ② 我这块覆盖的行号、列号(各是一个一维向量)
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)   # [BLOCK_M]
-    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)   # [BLOCK_N]
-    offs_k = tl.arange(0, BLOCK_K)                      # [BLOCK_K]
+    # ② 我这块覆盖哪些行号、列号,以及 K 方向的块内偏移
 
-    # ③ 一整块指针:坐标 -> 地址 = 基址 + 行*行跨度 + 列*列跨度
-    #    [:, None] / [None, :] 把两个一维向量广播成二维
-    a_ptrs = A_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak   # [BLOCK_M, BLOCK_K]
-    b_ptrs = B_ptr + offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn   # [BLOCK_K, BLOCK_N]
+    # ③ 把坐标换成地址:基址 + 行*行跨度 + 列*列跨度
+    #    [:, None] / [None, :] 把一维向量广播成二维
 
-    # ④ 累加器:整块,fp32
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    # ④ 开一个 [BLOCK_M, BLOCK_N] 的 fp32 累加器
 
-    # ⑤ 沿 K 一段一段乘加
-    for k in range(0, K, BLOCK_K):
-        # 边界掩码:M/N/K 不是 tile 整数倍时,越界的位置读 0
-        a_mask = (offs_m[:, None] < M) & ((k + offs_k)[None, :] < K)
-        b_mask = ((k + offs_k)[:, None] < K) & (offs_n[None, :] < N)
+    # ⑤ 沿 K 一段一段乘加。M/N/K 不保证是分块的整数倍,越界的位置要掩掉读 0
 
-        a = tl.load(a_ptrs, mask=a_mask, other=0.0)     # 搬 A 的一块(谁搬、搬到哪:编译器管)
-        b = tl.load(b_ptrs, mask=b_mask, other=0.0)     # 搬 B 的一块
+    # ⑥ 写回:累加器转回 bf16,越界位置不写
 
-        acc += tl.dot(a, b)                             # 块乘块,走 tensor core(Ampere: mma.sync)
-
-        a_ptrs += BLOCK_K * stride_ak                   # 指针沿 K 前进一段
-        b_ptrs += BLOCK_K * stride_bk
-
-    # ⑥ 写回:转回 bf16,越界位置不写
-    c_ptrs = C_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
-    c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-    tl.store(c_ptrs, acc.to(tl.bfloat16), mask=c_mask)
+    pass

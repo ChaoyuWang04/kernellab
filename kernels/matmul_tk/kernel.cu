@@ -1,10 +1,14 @@
-// ThunderKittens × 矩阵乘 —— 用 tile 当基本单位,而不是指针
+// ThunderKittens 矩阵乘。C[M,N] = A[M,K] @ B[K,N],bf16 进、fp32 累加、bf16 出。
 //
-// TK 的主张:把「16×16 的一块」当成语言里的一等公民。你声明 st_bf(共享内存 tile)、
-// rt_bf / rt_fl(寄存器 tile),用 load / store / mma_AB 在它们之间搬,
-// 线程到数据的映射、swizzle、fragment 布局全由库管。
+// TK 的主张:把「一块 tile」当成语言里的一等公民。你声明 st_bf(共享内存 tile)、
+// rt_bf / rt_fl(寄存器 tile),用 load / store / mma_AB 在它们之间搬 ——
+// 线程到数据的映射、swizzle、fragment 布局全由库管,你一个指针都不写。
 //
-// 代价:形状必须是 tile 尺寸的整数倍。TK 是给 ML 里那些规整形状设计的。
+// 契约:下面的常量、tile_gl 类型与 matmul_launch 的签名。接线的 binding.cu 声明了
+// matmul_launch,负责 torch 张量检查与 pybind 导出,改了签名就链接不上。
+//
+// 注意 TK 要求 M / N / K 都是 tile 尺寸的整数倍 —— 这是它的设计取舍,
+// 所以这道题的 1000x999x777 那档不在 TK 的 case 列表里。
 #include <cuda_bf16.h>
 #include "kittens.cuh"
 
@@ -15,7 +19,7 @@ constexpr int BN = 64;
 constexpr int BK = 64;          // K 方向每步吃多少
 constexpr int NUM_WARPS = 4;
 constexpr int NUM_THREADS = NUM_WARPS * WARP_THREADS;
-constexpr int WM = BM / NUM_WARPS;   // 每个 warp 负责 16 行
+constexpr int WM = BM / NUM_WARPS;   // 每个 warp 负责几行
 
 using tile_gl = gl<bf16, 1, 1, -1, -1, st_bf<BM, BK>>;
 
@@ -24,42 +28,28 @@ void matmul_kernel(const __grid_constant__ tile_gl gA,
                    const __grid_constant__ tile_gl gB,
                    const __grid_constant__ tile_gl gC,
                    int M, int N, int K) {
-    extern __shared__ alignment_dummy __shm[];
-    shared_allocator al((int*)&__shm[0]);
-    st_bf<BM, BK> &As = al.allocate<st_bf<BM, BK>>();
-    st_bf<BK, BN> &Bs = al.allocate<st_bf<BK, BN>>();
+    // ① 在动态共享内存里开两块 tile:
+    //    extern __shared__ alignment_dummy __shm[];
+    //    shared_allocator al((int*)&__shm[0]);
+    //    st_bf<BM, BK> &As = al.allocate<st_bf<BM, BK>>();
 
-    const int warp = warpid();
-    const int brow = blockIdx.y;     // 第几个行块
-    const int bcol = blockIdx.x;     // 第几个列块
+    // ② 开累加器:rt_fl<WM, BN>,用 warp::zero 清零
 
-    rt_fl<WM, BN> acc;               // 累加器住寄存器,fp32
-    warp::zero(acc);
+    // ③ 沿 K 一段一段:
+    //    group<NUM_WARPS>::load(As, gA, {0, 0, 第几行块, 第几个 K 块})   整个 block 合作搬
+    //    group<NUM_WARPS>::sync(0)
+    //    每个 warp 取自己那几行:As.template subtile<WM, BK>({warpid(), 0})
+    //    B 的 fragment 要列布局:rt_bf<BK, BN, ducks::rt_layout::col>
+    //    warp::mma_AB(acc, a, b, acc)                                   tile 乘 tile
+    //    再 sync 一次才能覆盖
 
-    const int ktiles = K / BK;
-    for (int kt = 0; kt < ktiles; ++kt) {
-        // 整个 block 合作把两块搬进共享内存(TK 自己排线程、自己 swizzle)
-        group<NUM_WARPS>::load(As, gA, {0, 0, brow, kt});
-        group<NUM_WARPS>::load(Bs, gB, {0, 0, kt, bcol});
-        group<NUM_WARPS>::sync(0);
-
-        // 每个 warp 取自己那 16 行;B 的 fragment 要列布局(mma_AB 的约定)
-        rt_bf<WM, BK> a;
-        rt_bf<BK, BN, ducks::rt_layout::col> b;
-        warp::load(a, As.template subtile<WM, BK>({warp, 0}));
-        warp::load(b, Bs);
-        warp::mma_AB(acc, a, b, acc);     // 一句话:tile 乘 tile,降到 mma.sync
-
-        group<NUM_WARPS>::sync(0);
-    }
-
-    rt_bf<WM, BN> out;
-    warp::copy(out, acc);                 // fp32 累加器 -> bf16
-    warp::store(gC, out, {0, 0, brow * NUM_WARPS + warp, bcol});
+    // ④ 写回:warp::copy 把 fp32 累加器转成 rt_bf,再 warp::store 到 gC
 }
 
 void matmul_launch(const __nv_bfloat16* A, const __nv_bfloat16* B, __nv_bfloat16* C,
                    int M, int N, int K, cudaStream_t stream) {
+    // 用 make_gl<tile_gl>(ptr, b, d, rows, cols) 把裸指针包成 TK 的全局张量。
+    // 共享内存超过默认 carveout 时要先 cudaFuncSetAttribute 抬上限。
     tile_gl gA = make_gl<tile_gl>(reinterpret_cast<uint64_t>(A), 1, 1, M, K);
     tile_gl gB = make_gl<tile_gl>(reinterpret_cast<uint64_t>(B), 1, 1, K, N);
     tile_gl gC = make_gl<tile_gl>(reinterpret_cast<uint64_t>(C), 1, 1, M, N);
