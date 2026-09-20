@@ -5,7 +5,7 @@ from pathlib import Path
 
 from klab.config import load_targets
 from klab.kreport import render
-from klab.web import (MODES, TOOLCHAIN_LANG, _parse_run, list_kernels, list_problems,
+from klab.web import (MODES, TOOLCHAIN_LANG, _parse_run, body_of, header_doc, list_kernels, list_problems, solutions_for,
                       list_runs, md_to_html, primary_source, state)
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,3 +177,30 @@ def test_solutions_ladder_is_ordered_and_documented():
         assert s["title"] and s["title"] != s["id"], f"{s['id']} 缺标题(docstring 第一行)"
         assert len(s["note"]) > 80, f"{s['id']} 的说明太短,参考答案要讲清为什么"
         assert "@triton.jit" in s["code"] and "def matmul_kernel" in s["code"]
+
+
+def test_header_doc_reads_python_docstring_and_cpp_comment_block():
+    """面板左侧靠这段文字当讲解。C++ 没有 docstring,只认 docstring 的话 cuda/tk 的阶梯
+    在面板里就只剩一个文件名 —— 曾经就是这样,6 份 cuda + 1 份 tk 的讲解全部不可见。"""
+    assert header_doc('"""标题\n\n正文"""\nimport x\n', ".py") == ["标题", "", "正文"]
+    assert header_doc("// 标题\n//\n// 正文\n#include <x>\n", ".cu") == ["标题", "", "正文"]
+    assert header_doc("#include <x>\n// 不是开头的注释\n", ".cu") == []
+
+
+def test_every_solution_in_the_repo_has_a_title_and_a_note():
+    """参考答案的价值一半在讲解里。任何一级缺讲解都要当场发现,别等用户在面板里点开才看见空白。"""
+    for tc in ("triton", "tilelang", "cuda", "cute", "tk"):
+        for s in solutions_for(ROOT, "matmul", tc):
+            assert s["title"] != s["id"], f"{tc}/{s['id']} 的标题退化成了文件名,说明抽不到讲解"
+            assert len(s["note"]) > 80, f"{tc}/{s['id']} 几乎没有讲解({len(s['note'])} 字)"
+
+
+def test_body_of_drops_the_prose_header_so_diffs_show_only_code():
+    """「与上一级的差异」比的是 body。每级都会重写开头的讲解,连着比的话 diff 满屏是散文,
+    真正改动的那几行反而被埋掉 —— 而阶梯的卖点就是「每级只改一处」。"""
+    assert body_of('"""讲解\n多行"""\n\nimport x\n', ".py") == "import x\n"
+    assert body_of("// 讲解\n// 多行\n#include <x>\n", ".cu") == "#include <x>\n"
+    for tc, first_line in (("cuda", "#include"), ("triton", "import")):
+        for s in solutions_for(ROOT, "matmul", tc):
+            assert not s["body"].startswith(("//", '"""')), f"{tc}/{s['id']} 的 body 还带着讲解"
+            assert s["body"].startswith(first_line), f"{tc}/{s['id']} body 开头是 {s['body'][:20]!r}"

@@ -111,10 +111,25 @@ main { height:calc(100% - var(--head)); display:flex; padding:8px; gap:0; }
 .sheetbox { background:var(--panel); border-radius:10px; width:min(560px, 92vw);
             max-height:70vh; overflow:auto; padding:14px; box-shadow:0 12px 40px rgba(0,0,0,.18); }
 
-/* ---------- 参考答案 ---------- */
-.sol { margin-bottom: 14px; }
-.sol .row { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.sol .note { margin: 0; padding: 10px 14px; border: 1px solid var(--line); border-top: 0;
-             border-radius: 0 0 8px 8px; background: #fafbfc; color: var(--dim);
-             font: 12.5px/1.6 -apple-system, "PingFang SC", system-ui, sans-serif;
-             white-space: pre-wrap; }
+/* ---------- 参考答案(左侧读物:一次一级,代码默认藏着) ---------- */
+.hint { color:var(--faint); font-size:12.5px; margin:8px 0; }
+.solnav { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.solnav .hint { margin:0; }
+.tabpane h2 .badge { vertical-align:middle; margin-right:6px; }
+
+.note { margin:12px 0 0; padding:12px 15px; border:1px solid var(--line); border-radius:8px;
+        background:#fafbfc; color:var(--dim);
+        font:12.5px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif; white-space:pre-wrap; }
+
+.reveal { display:block; width:100%; margin-top:16px; padding:15px;
+          background:var(--chip); border:1px dashed #c9ccd1; color:var(--dim); font-size:13px; }
+.reveal:hover { background:var(--hover); color:var(--fg); border-color:#b4b8be; }
+
+.solbar { display:flex; align-items:center; gap:6px; margin:16px 0 10px; }
+.seg { background:var(--chip); color:var(--dim); font-size:12px; padding:4px 11px; }
+.seg:hover:not(:disabled) { background:var(--hover); }
+.seg.on { background:#e8f3ff; color:#0b64cf; font-weight:600; }
+
+.codeview { margin:0; padding:12px 14px; background:#f7f8f9; border:1px solid var(--line);
+            border-radius:8px; overflow:auto; font:12.5px/1.55 var(--mono); white-space:pre; }
+.diffbox { height:min(62vh, 620px); border:1px solid var(--line); border-radius:8px; overflow:hidden; }

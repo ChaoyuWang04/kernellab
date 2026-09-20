@@ -148,6 +148,7 @@ async function selectProblem(name) {
 }
 
 async function selectImpl(name) {
+  solIdx = null;                       // 换语言:阶梯长度不同,回列表页
   const p = S.problems.find(p => p.name === problem);
   impl = p.impls.find(k => k.name === name);
   $('impl').value = name;
@@ -251,34 +252,132 @@ async function showReport(run, jump) {
   if (jump) showTab('result');
 }
 
+/* 参考答案是「左边读、右边自己写」的读物,不是一点就把编辑器覆盖掉的跳板。
+   所以:列表点进去是详情页(一次一级),代码默认藏在「看答案」后面,
+   逼自己先照着讲解写一遍;要对照上一级改了哪一处,有 diff 视图。 */
+let sols = [];            // 当前语言的阶梯
+let solIdx = null;        // 打开第几级;null = 停在列表页
+let solShow = false;      // 这一级的代码揭晓了没有(换级就重置)
+let solView = 'code';     // 'code' | 'diff'
+let diffEd = null;        // Monaco diff 实例,换视图/换级前要 dispose,否则模型泄漏
+
+function dropDiff() {
+  if (!diffEd) return;
+  const m = diffEd.getModel();
+  diffEd.dispose();
+  if (m) { m.original.dispose(); m.modified.dispose(); }
+  diffEd = null;
+}
+
 async function renderSolutions() {
+  dropDiff();
   const p = S.problems.find(p => p.name === problem);
   const langs = p.impls.map(k => `<option value="${esc(k.name)}" ${k.name === impl.name ? 'selected' : ''}
       ${k.ready ? '' : 'disabled'}>${esc(k.toolchain)}</option>`).join('');
   const r = await api('/api/solutions?kernel=' + encodeURIComponent(impl.name));
-  const sols = r.ok ? r.data.solutions : [];
+  sols = r.ok ? r.data.solutions : [];
+  if (solIdx !== null && solIdx >= sols.length) solIdx = null;
+  if (solIdx === null) solList(langs); else solDetail();
+}
+
+function solList(langs) {
   $('pane-solutions').innerHTML =
     `<h2>参考答案</h2>
      <p>从零到最优的完整晋升路径,每一级只改一处。语言
        <select id="sol-lang">${langs}</select>
-       —— 同样的数学、同样的 case 与容差,数字可以直接横着比。</p>`
-    + (sols.length ? sols.map(s => `
-        <div class="sol">
-          <div class="row" data-sol="${esc(s.id)}">
-            <span class="badge cur">${esc(s.id.split('-')[0])}</span>
-            <span class="k">${esc(s.title)}</span>
-            <span class="n">载入编辑器 →</span>
-          </div>
-          <pre class="note">${esc(s.note)}</pre>
+       —— 同样的数学、同样的 case 与容差,数字可以直接横着比。</p>
+     <p class="hint">点进去先读讲解,代码藏在「看答案」后面 —— 建议先照着思路自己在右边写一遍再对。</p>`
+    + (sols.length ? sols.map((s, i) => `
+        <div class="row" data-open="${i}">
+          <span class="badge cur">${esc(s.id.split('-')[0])}</span>
+          <span class="k">${esc(s.title)}</span>
+          <span class="n">读这一级 →</span>
         </div>`).join('')
        : `<p class="empty">这一语言还没有写参考答案(放在 problems/${esc(problem)}/solutions/&lt;工具链&gt;/)。</p>`);
   const sel = $('sol-lang');
-  if (sel) sel.onchange = () => { if (!busy) selectImpl(sel.value).then(renderSolutions); };
-  $('pane-solutions').querySelectorAll('[data-sol]').forEach(el => el.onclick = () => {
-    if (busy) return;
-    const s = sols.find(x => x.id === el.dataset.sol);
-    if (s && confirm(`把「${s.title}」载入编辑器?当前代码会被覆盖。`)) { setCode(s.code, impl.language); save(); }
+  if (sel) sel.onchange = () => { if (!busy) { solIdx = null; selectImpl(sel.value).then(renderSolutions); } };
+  $('pane-solutions').querySelectorAll('[data-open]').forEach(el => el.onclick = () => {
+    openSol(+el.dataset.open);
   });
+}
+
+function openSol(i) {
+  solIdx = i; solShow = false; solView = 'code';
+  solDetail();
+  $('pane-solutions').parentElement.scrollTop = 0;    // .body 才是滚动容器
+}
+
+function solDetail() {
+  dropDiff();
+  const s = sols[solIdx];
+  $('pane-solutions').innerHTML = `
+    <div class="solnav">
+      <button class="ghost tiny" id="sol-back">← 阶梯</button>
+      <span class="hint">${esc(impl.toolchain)} · 第 ${solIdx + 1} / ${sols.length} 级</span>
+      <div class="spacer"></div>
+      <button class="ghost tiny" id="sol-prev" ${solIdx === 0 ? 'disabled' : ''}>← 上一级</button>
+      <button class="ghost tiny" id="sol-next" ${solIdx === sols.length - 1 ? 'disabled' : ''}>下一级 →</button>
+    </div>
+    <h2><span class="badge cur">${esc(s.id.split('-')[0])}</span> ${esc(s.title)}</h2>
+    <pre class="note">${s.note ? esc(s.note) : '<i>这一级还没写讲解。</i>'}</pre>
+    <div id="sol-answer"></div>`;
+  $('sol-back').onclick = () => { solIdx = null; renderSolutions(); };
+  $('sol-prev').onclick = () => openSol(solIdx - 1);
+  $('sol-next').onclick = () => openSol(solIdx + 1);
+  solAnswer();
+}
+
+function solAnswer() {
+  dropDiff();
+  const s = sols[solIdx], prev = sols[solIdx - 1];
+  const box = $('sol-answer');
+  if (!solShow) {
+    box.innerHTML = `<button class="reveal" id="sol-reveal">👁 看答案</button>
+      <p class="hint">先照着上面的思路在右边写一遍;卡住了、或者写完想对一下,再点开。</p>`;
+    $('sol-reveal').onclick = () => { solShow = true; solAnswer(); };
+    return;
+  }
+  box.innerHTML = `
+    <div class="solbar">
+      <button class="seg ${solView === 'code' ? 'on' : ''}" data-view="code">完整代码</button>
+      <button class="seg ${solView === 'diff' ? 'on' : ''}" data-view="diff"
+              ${prev ? `title="和「${esc(prev.title)}」比"` : 'disabled title="这是第 0 级,没有上一级"'}>与上一级的差异</button>
+      <div class="spacer"></div>
+      <button class="ghost tiny" id="sol-load" title="覆盖右边的编辑器">载入编辑器</button>
+    </div>
+    ${solView === 'diff' && prev ? `<p class="hint">和「${esc(prev.title)}」比,只比代码 —— 开头那段讲解每级都重写,比了全是噪音。</p>` : ''}
+    <div id="sol-body"></div>`;
+  box.querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
+    if (!b.disabled) { solView = b.dataset.view; solAnswer(); }
+  });
+  $('sol-load').onclick = () => {
+    if (busy) return;
+    if (confirm(`把「${s.title}」载入右边的编辑器?你现在写的代码会被覆盖。`)) {
+      setCode(s.code, impl.language); save();
+    }
+  };
+  const body = $('sol-body');
+  if (typeof monaco === 'undefined') {           // 没 vendor 到 Monaco 时的退路
+    body.innerHTML = `<pre class="codeview">${esc(s.code)}</pre>`;
+    return;
+  }
+  if (solView === 'diff' && prev) {
+    body.innerHTML = '<div class="diffbox" id="sol-diff"></div>';
+    diffEd = monaco.editor.createDiffEditor($('sol-diff'), {
+      readOnly: true, renderSideBySide: false, automaticLayout: true, theme: 'vs',
+      fontSize: 12.5, fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+      minimap: {enabled: false}, scrollBeyondLastLine: false, renderOverviewRuler: false,
+    });
+    // 比的是 body 不是 code:每一级都会重写开头的讲解,连着比的话满屏都是散文
+    diffEd.setModel({
+      original: monaco.editor.createModel(prev.body, impl.language),
+      modified: monaco.editor.createModel(s.body, impl.language),
+    });
+    return;
+  }
+  monaco.editor.colorize(s.code, impl.language, {tabSize: 4})
+    .then(html => { body.innerHTML = `<pre class="codeview">${html}</pre>`; })
+    .catch(() => { body.innerHTML = `<pre class="codeview">${esc(s.code)}</pre>`; });
 }
 
 function renderSubs() {

@@ -257,10 +257,46 @@ def backbone_for(root: Path, problem: str, toolchain: str) -> str:
     return t.read_text() if t.is_file() else ""
 
 
+def header_doc(code: str, suffix: str) -> list[str]:
+    """参考答案开头那段说明文字。
+
+    `.py` 取模块 docstring;`.cu` 取开头连续的 `//` 注释块 —— C++ 里没有 docstring,
+    只认 docstring 的话 cuda 与 tk 的阶梯在面板里就只剩一个文件名。
+    """
+    if suffix == ".py":
+        m = re.match(r'\s*"""(.*?)"""', code, re.S)
+        return m.group(1).splitlines() if m else []
+    out: list[str] = []
+    for line in code.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("//"):
+            break
+        out.append(stripped[2:].removeprefix(" "))
+    return out
+
+
+def body_of(code: str, suffix: str) -> str:
+    """去掉开头那段讲解之后的代码本体,供「与上一级的差异」比对。
+
+    阶梯每一级都会重写开头的讲解,连着比的话 diff 满屏都是散文,真正改动的那几行反而被埋掉 ——
+    而阶梯的卖点恰恰是「每级只改一处」。
+    """
+    if suffix == ".py":
+        m = re.match(r'\s*""".*?"""', code, re.S)
+        rest = code[m.end():] if m else code
+    else:
+        lines = code.splitlines(keepends=True)
+        i = 0
+        while i < len(lines) and lines[i].strip().startswith("//"):
+            i += 1
+        rest = "".join(lines[i:])
+    return rest.lstrip("\n")
+
+
 def solutions_for(root: Path, problem: str, toolchain: str) -> list[dict]:
     """参考答案阶梯:problems/<题>/solutions/<工具链>/<序号>-<名字>.<后缀>。
 
-    文件名的序号决定顺序;模块 docstring 的第一行是标题,其余是说明。
+    文件名的序号决定顺序;开头说明的第一行是标题,其余是讲解(见 header_doc)。
     """
     d = root / "problems" / problem / "solutions" / toolchain
     if not d.is_dir():
@@ -270,13 +306,13 @@ def solutions_for(root: Path, problem: str, toolchain: str) -> list[dict]:
         if not f.is_file() or f.suffix not in (".py", ".cu"):
             continue
         code = f.read_text()
-        title, note = f.stem, ""
-        m = re.match(r'\s*"""(.*?)"""', code, re.S)
-        if m:
-            doc = m.group(1).strip().splitlines()
-            title = doc[0].strip() or f.stem
-            note = "\n".join(doc[1:]).strip()
-        out.append({"id": f.stem, "title": title, "note": note, "code": code})
+        doc = [ln.rstrip() for ln in header_doc(code, f.suffix)]
+        while doc and not doc[0].strip():
+            doc.pop(0)
+        title = doc[0].strip() if doc else f.stem
+        note = "\n".join(doc[1:]).strip()
+        out.append({"id": f.stem, "title": title, "note": note, "code": code,
+                    "body": body_of(code, f.suffix)})
     return out
 
 
