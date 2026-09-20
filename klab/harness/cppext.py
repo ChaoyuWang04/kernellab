@@ -64,8 +64,11 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
     cflags += extra_cuda_cflags or []
     from torch.utils.cpp_extension import load
 
+    # TK 调 CUDA driver API(cuGetErrorString 等),要显式链 libcuda,否则导入时才报 undefined symbol
+    ldflags = ["-lcuda"] if tk else []
     return load(
         name=name,
+        extra_ldflags=ldflags,
         sources=[str(kdir / s) for s in sources] + [str(sdir / s) for s in (spec_sources or [])],
         extra_cuda_cflags=cflags,
         extra_include_paths=includes,

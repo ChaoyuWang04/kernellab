@@ -71,7 +71,7 @@ uv run klab web            # http://127.0.0.1:8777,自动开浏览器;--no-open 
 
 编辑器里的代码停手约 1 秒自动存回 `kernels/<名>/kernel.py`(git 照常管它);每次运行另存一份源码快照到 `runs/<id>/submission/`,所以「这个 204 TFLOPS 对应哪份代码」永远查得到。「↺ 重置」恢复成 `problems/<题>/backbone/<工具链>.py`:**契约(启动常量 + 函数签名)给全,函数体留空**,和 LeetCode 给你函数签名是一个意思。
 
-**一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面挂着 triton / tilelang / cuda / cute 四个实现,同样的 case 与容差,数字可以直接横着比 —— 编辑器头部下拉切语言,右上角下拉切后端。
+**一道题 × 多种语言**:`meta.toml` 的 `problem` 键把多个算子聚成一道题。`matmul` 这道题下面挂着 triton / tilelang / cuda / cute / **tk** 五个实现,同样的 case 与容差,数字可以直接横着比 —— 编辑器头部下拉切语言,右上角下拉切后端。(tk 少一档非整数倍的 case:ThunderKittens 的 tile 操作要求形状是 tile 尺寸的整数倍。)
 
 编辑器是 Monaco(MIT,24 MB 预编译产物),首次运行 `klab web` 时自动从 npm registry 取到 `klab/webui/vendor/`(gitignore,照 ThunderKittens 的先例)。取不到也能用,会退回纯文本编辑框。除此之外**不引入任何依赖**:服务端是 stdlib 的 `http.server`,没有 web 框架、没有构建步骤、没有 node 运行时。
 

@@ -141,6 +141,9 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 - `klab probe` 的 `peak_tflops_fp16` 是用固定配置测的,会低于真实可达上限(A100 上 probe 测 241,autotune 后的 triton matmul 到 257.9)。峰值应该填「见过的最好成绩」,否则 %峰值 会超过 100%。
 - TileLang 生成的 kernel 名是 `gemm_kernel`;CuTe DSL 的名字以 `kernel_cutlass_kernel_` 开头,`kernel_regex` 写 `cutlass`。写宽了会把 torch 造输入的 kernel 抓进报告、体检单取错行。
 - ThunderKittens:sm_90 起要 `compute_XXa` 架构目标;宏 `KITTENS_SM<xx>` 只能定义一个;`gl` 的编译期维度要传 `nullptr`,用 `make_gl<GL>(ptr, b, d, r, c)` 省事;`warpid()` 在 `kittens::` 命名空间。
+- TK 调 CUDA driver API,**必须显式 `-lcuda`**,否则编译通过、导入时才报 `undefined symbol: cuGetErrorString`。`cppext` 在 `tk=True` 时自动加。
+- TK 取共享内存子块的成员函数叫 `subtile`(`As.template subtile<R,C>({r,c})`),不是 `subtile_inplace`。
+- **TK 的 tile 操作要求 M/N/K 都是 tile 尺寸的整数倍**,不规整形状要调用方 pad。所以 `specs/matmul_tk/` 的 case 列表比另外四种语言少一档。
 - torch 扩展里用 `getCurrentCUDAStream` 要 `#include <ATen/cuda/CUDAContext.h>`。
 - Triton 3.8 的编译缓存是 `JITFunction.device_caches`(旧版叫 `cache`),device → tuple → dict 嵌套,层级各版本不同;`ptxdump._walk()` 按容器递归找叶子,不写死结构。
 - PTX 里出现 `stmatrix` 不代表用上了 Hopper:它 sm_90 起就有,5090 照样发。判定只认标志指令(`mma.sync` / `wmma.mma` / `cp.async` / `wgmma` / `cp.async.bulk` / `tcgen05`)。

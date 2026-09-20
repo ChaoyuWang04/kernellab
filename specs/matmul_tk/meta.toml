@@ -1,0 +1,51 @@
+name = "matmul_tk"
+problem = "matmul"          # 与另外四种语言同一道题
+toolchain = "tk"
+kernel_regex = "matmul_kernel"
+
+[requires]
+min_cc = 8.0
+features = ["mma_sync", "async_copy"]
+
+[tolerance]
+atol = 1e-1
+rtol = 1e-2
+
+# 注意:TK 的 tile 操作要求 M / N / K 都是 tile 尺寸(这里 64)的整数倍,
+# 所以这份没有另外四种语言都有的 1000x999x777 那档 —— 这是 TK 的设计取舍,
+# 它是给 ML 里那些规整形状准备的。其余五档与另外四种语言完全一致,数字可以横着比。
+
+[[cases]]
+name = "4096-bf16"
+m = 4096
+n = 4096
+k = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "8192-bf16"
+m = 8192
+n = 8192
+k = 8192
+dtype = "bfloat16"
+
+[[cases]]
+name = "smallK-4096x4096x64-bf16"
+m = 4096
+n = 4096
+k = 64
+dtype = "bfloat16"
+
+[[cases]]
+name = "tall-16384x512x4096-bf16"
+m = 16384
+n = 512
+k = 4096
+dtype = "bfloat16"
+
+[[cases]]
+name = "deepK-512x512x16384-bf16"
+m = 512
+n = 512
+k = 16384
+dtype = "bfloat16"
