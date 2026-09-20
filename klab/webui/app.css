@@ -104,6 +104,7 @@ main { height:calc(100% - var(--head)); display:flex; padding:8px; gap:0; }
 .badge.ok { background:#e6f7ec; color:var(--green-d); }
 .badge.bad { background:#fdecec; color:var(--red); }
 .badge.cur { background:#e8f3ff; color:#0b64cf; }
+.badge.need { background:#fff4e5; color:#a35b00; }
 
 /* ---------- 题目列表浮层 ---------- */
 .sheet { position:fixed; inset:0; background:rgba(0,0,0,.28); display:flex;
@@ -133,3 +134,5 @@ main { height:calc(100% - var(--head)); display:flex; padding:8px; gap:0; }
 .codeview { margin:0; padding:12px 14px; background:#f7f8f9; border:1px solid var(--line);
             border-radius:8px; overflow:auto; font:12.5px/1.55 var(--mono); white-space:pre; }
 .diffbox { height:min(62vh, 620px); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.needbar { margin:10px 0 0; padding:9px 13px; border-radius:8px;
+           background:#fff4e5; border:1px solid #ffd9a8; color:#8a4d00; font-size:12.5px; }

@@ -298,6 +298,7 @@ function solList(langs) {
         <div class="row" data-open="${i}">
           <span class="badge cur">${esc(s.id.split('-')[0])}</span>
           <span class="k">${esc(s.title)}</span>
+          ${s.requires ? `<span class="badge need">需要 ${esc(s.requires)}</span>` : ''}
           <span class="n">读这一级 →</span>
         </div>`).join('')
        : `<p class="empty">这一语言还没有写参考答案(放在 problems/${esc(problem)}/solutions/&lt;工具链&gt;/)。</p>`);
@@ -326,6 +327,8 @@ function solDetail() {
       <button class="ghost tiny" id="sol-next" ${solIdx === sols.length - 1 ? 'disabled' : ''}>下一级 →</button>
     </div>
     <h2><span class="badge cur">${esc(s.id.split('-')[0])}</span> ${esc(s.title)}</h2>
+    ${s.requires ? `<p class="needbar">⚠️ 这一级只能在 <b>${esc(s.requires)}</b> 上编译 ——
+       右上角把后端切过去再 Run,否则会撞一屏编译错误。</p>` : ''}
     <pre class="note">${s.note ? esc(s.note) : '<i>这一级还没写讲解。</i>'}</pre>
     <div id="sol-answer"></div>`;
   $('sol-back').onclick = () => { solIdx = null; renderSolutions(); };

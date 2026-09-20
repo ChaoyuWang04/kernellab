@@ -293,10 +293,17 @@ def body_of(code: str, suffix: str) -> str:
     return rest.lstrip("\n")
 
 
+REQUIRES_RE = re.compile(r"^\s*(?:requires|需要)\s*[::]\s*(.+?)\s*$", re.I)
+
+
 def solutions_for(root: Path, problem: str, toolchain: str) -> list[dict]:
     """参考答案阶梯:problems/<题>/solutions/<工具链>/<序号>-<名字>.<后缀>。
 
     文件名的序号决定顺序;开头说明的第一行是标题,其余是讲解(见 header_doc)。
+
+    讲解里单独一行写 `需要: modal-h100` 的,那一级会在面板上挂个徽章 —— 换代类的答案
+    只能在特定的卡上编译(wgmma 只有 sm_90 有),不标出来的话用户在 5090 上点开就是
+    一屏看不懂的编译错误。
     """
     d = root / "problems" / problem / "solutions" / toolchain
     if not d.is_dir():
@@ -310,9 +317,15 @@ def solutions_for(root: Path, problem: str, toolchain: str) -> list[dict]:
         while doc and not doc[0].strip():
             doc.pop(0)
         title = doc[0].strip() if doc else f.stem
-        note = "\n".join(doc[1:]).strip()
-        out.append({"id": f.stem, "title": title, "note": note, "code": code,
-                    "body": body_of(code, f.suffix)})
+        requires, rest = "", []
+        for ln in doc[1:]:
+            m = REQUIRES_RE.match(ln)
+            if m and not requires:
+                requires = m.group(1)          # 徽章单独显示,就别在正文里重复一遍
+            else:
+                rest.append(ln)
+        out.append({"id": f.stem, "title": title, "note": "\n".join(rest).strip(),
+                    "requires": requires, "code": code, "body": body_of(code, f.suffix)})
     return out
 
 

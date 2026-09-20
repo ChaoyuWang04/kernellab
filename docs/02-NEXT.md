@@ -67,7 +67,18 @@
 
 同上,入口在 `include/ops/group/mma/tcgen05.cuh`。只能在 `modal-b200` 上验。
 
-### 4. cute × Hopper / Blackwell:换 atom
+### 4. cute × Hopper / Blackwell:换命名空间
+
+**Hopper 那一级试过了,没成 —— 半成品在 `problems/matmul/wip/cute-hopper-wgmma.py`。**
+编得过、跑得通、结果错 13%。文件头里列清了已验证正确的部分(共享内存内容、wgmma 的
+计算值、坐标映射、写回覆盖率)与唯一对不上的那条线索(去掉 `fill(0.0)` 就 NaN,但
+cosize 又说共享内存没空洞)。下次接手从那儿开始,不要从零重来。
+
+**API 用法已经全部摸清**(见那个文件的头部):`make_trivial_tiled_mma`、
+`make_smem_layout_a/b` 要拆 `outer`/`inner`、两个 slice 不能混用、fence/commit/wait
+四步协议、ACCUMULATE 字段。
+
+原计划的描述:
 
 第 1 项做完之后,这两级就是把 atom 换掉:`SM80_*` → `SM90_*` → `SM100_*`。
 

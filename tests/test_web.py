@@ -204,3 +204,23 @@ def test_body_of_drops_the_prose_header_so_diffs_show_only_code():
         for s in solutions_for(ROOT, "matmul", tc):
             assert not s["body"].startswith(("//", '"""')), f"{tc}/{s['id']} 的 body 还带着讲解"
             assert s["body"].startswith(first_line), f"{tc}/{s['id']} body 开头是 {s['body'][:20]!r}"
+
+
+def test_solution_can_declare_which_backend_it_needs():
+    """换代类的答案只能在特定的卡上编译(wgmma 只有 sm_90 有)。讲解里写一行
+    `需要: modal-h100`,面板就挂徽章 —— 不标的话用户在 5090 上点开就是一屏编译错误。"""
+    import re
+
+    from klab.web import REQUIRES_RE
+
+    assert REQUIRES_RE.match("需要: modal-h100").group(1) == "modal-h100"
+    assert REQUIRES_RE.match("requires: modal-b200").group(1) == "modal-b200"
+    assert REQUIRES_RE.match("需要这张卡不行") is None
+    # 真实文件里要么没写(空串),要么写的是 targets.toml 里存在的后端名
+    import tomllib
+
+    known = set(tomllib.loads((ROOT / "targets.toml").read_text()).get("targets", {}))
+    for tc in ("triton", "tilelang", "cuda", "cute", "tk"):
+        for sol in solutions_for(ROOT, "matmul", tc):
+            req = sol["requires"]
+            assert not req or req in known, f"{tc}/{sol['id']} 写了未知后端 {req!r}"
