@@ -133,10 +133,15 @@ Triton 里写 `tl.dot(a, b)` 就够,降到哪条指令由目标架构决定。**
 | 语言 | Ampere | Hopper | 数据中心 Blackwell |
 |---|---|---|---|
 | **tk** | `warp::mma_AB` | `warpgroup::mma_AB` | `tcgen05::mma` |
-| **cute** | `SM80_*` atom | `SM90_*` atom | `SM100_*` atom |
+| **cute** | `warp.MmaF16BF16Op` | `warpgroup.MmaF16BF16Op` | `tcgen05.MmaF16BF16Op` |
 | **cuda** | `wmma::mma_sync` | *官方答案:改用 CUTLASS* | *同左* |
 
-CuTe 的 atom 名字长这样 —— `SM90_64x128x16_F32BF16BF16_SS`:Hopper 的、一条指令算 64×128×16、累加 fp32 输入 bf16、两个输入都从共享内存来。**挑中它,发哪条 `wgmma`、描述符怎么编码、数据怎么摆,全在这块积木里。**
+CuTe DSL 里这件事尤其干净:**同一个类名 `MmaF16BF16Op` 在三个命名空间里各有一份**,
+`cutlass.cute.nvgpu.warp` / `warpgroup` / `tcgen05` 分别对应 Ampere / Hopper / 数据中心 Blackwell。
+换代 = 换一行 import。**挑中它,发哪条指令、描述符怎么编码、数据怎么摆,全在这块积木里。**
+
+(注意别被 C++ 版的命名带偏:CUTLASS 的 C++ CuTe 里 atom 叫 `SM90_64x128x16_F32BF16BF16_SS` 这种,
+Python DSL 不用这套名字。本仓库走的是 Python DSL。)
 
 裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的答案就是「用 CUTLASS」。所以这个仓库里 **cuda 这一列到 Ampere 为止**,再往上是改 CUTLASS 的参数(tile 形状 / schedule / atom),或者直接走它的 Python 前端 —— 也就是本仓库 cute 这一列。**这本身就是一条该学的结论,不是我们偷懒。**
 

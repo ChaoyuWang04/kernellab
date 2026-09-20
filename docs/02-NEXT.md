@@ -15,7 +15,7 @@
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
 | tilelang | 4 | naive → swizzle → tiles → splitk |
-| cute | **1** | 只有纯标量 naive |
+| cute | **2** | naive → atom(2026-09-20) |
 | tk | **1** | 只有 `warp::mma_AB` |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
@@ -25,7 +25,7 @@
 | triton | ✅ | ✅ | ✅ | 自动,已四卡实测 |
 | tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
 | tk | ✅ | ❌ | ❌ | 换命名空间 |
-| cute | ❌ | ❌ | ❌ | 换 atom |
+| cute | ✅ | ❌ | ❌ | 换命名空间(`warp` → `warpgroup` → `tcgen05`) |
 | cuda | ✅ | ❌ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
 
 **轴二前两行是白送的** —— 代码一个字不改,我们的活只是去量。**后三行才要动手**,而且动手的量都不大:换名字、换积木、改参数。
@@ -35,13 +35,19 @@
 > 每一项都按「官方推荐的路」写,判定表见 [CLAUDE.md 定位节](../CLAUDE.md#定位写参考答案前必读)。
 > **不手写 `wgmma` / `tcgen05` 的 PTX 协议,也不手写 `mma.sync` + `ldmatrix` 的 fragment 布局。**
 
-### 1. cute × Ampere:从标量换成 atom ← 建议先做
+### ~~1. cute × Ampere:从标量换成 atom~~ ✅ 2026-09-20
 
-**为什么先做它**:现在 `cute/0-naive.py` 是**用 CUTLASS 的皮、没用 CUTLASS 的肉** —— 线程索引 + `for k` 累加,和裸 CUDA 第 0 级一样,实测 3.9 TFLOPS(0.02× torch),五种语言垫底。而且 `SM80_*` atom 在默认后端 5090 上就能编能跑,**不用切卡**。这一步同时补两根轴。
+做完了,见 `problems/matmul/solutions/cute/1-atom.py`。三行代码(挑 op → `make_tiled_mma` → `cute.gemm`),
+5090 上 **3.86 → 36.70 TFLOPS,快 9.5 倍**,`klab ptx` 从 `fma×1` 变成 `mma.sync×32`。
 
-**怎么做**:用 `TiledMma` / `TiledCopy` 描述「数据怎么切、谁搬哪块、怎么喂 tensor core」,atom 选 `SM80_16x8x16_F32BF16BF16F32_TN` 这一族。官方 dense GEMM 示例可以从 git 历史捞(见 [D13](03-DECISIONS.md#d13-历史里能捞的东西))。
+留下的结论供后面几级参考:
 
-**对照基线已经量好了**(2026-09-20,5090):现在这份 `0-naive` 的 PTX 只有 85 行,`fma×1 / ld.global×2 / st.global×1`,判定「没有任何标志指令」。atom 版跑出 `mma.sync` 就算这一级成了。
+- **CuTe DSL 的 atom 不叫 `SM80_*`**(那是 C++ CuTe 的命名)。Python DSL 里是
+  `cutlass.cute.nvgpu.<warp|warpgroup|tcgen05>.MmaF16BF16Op` —— **同一个类名,三个命名空间**,
+  换代就是换一行 import。第 3、4 项照着改即可。
+- 这一级**故意没动搬运**(还是逐元素循环),于是体检单判定是「两头都没跑满」、76% 的等待在等显存,
+  tensor core 只有 15%。**下一级该修的就是这个**(见第 6 项的 cute 主线)。
+- atom 对操作数布局有硬要求:A、B 都必须 K 连续。B 是行主序 (K,N),所以搬进共享内存时要转置成 (N,K)。
 
 ### 2. tk × Hopper:`warp::mma_AB` → `warpgroup::mma_AB`
 

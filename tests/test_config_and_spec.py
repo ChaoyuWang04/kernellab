@@ -117,3 +117,15 @@ def test_every_spec_can_name_its_solutions_directory():
         d = root / "problems" / spec.problem / "solutions" / spec.toolchain
         assert d.is_dir(), f"{meta.parent.name}: {d.relative_to(root)} 不存在"
         assert list(d.glob("*.py")) or list(d.glob("*.cu")), f"{d.relative_to(root)} 里没有答案"
+
+
+def test_every_cli_command_using_solution_also_declares_the_option():
+    """`--solution` 加漏过一次:bench 的函数体里用了 solution,签名里却没有,一调就 NameError。
+    CLI 命令没有本地测试会跑到它们,所以这里静态守一道。"""
+    tree = ast.parse((ROOT / "klab" / "cli.py").read_text())
+    for fn in [n for n in tree.body if isinstance(n, ast.FunctionDef)]:
+        uses = any(isinstance(n, ast.Name) and n.id == "solution" for n in ast.walk(fn))
+        if not uses:
+            continue
+        names = [a.arg for a in fn.args.args + fn.args.kwonlyargs]
+        assert "solution" in names, f"klab {fn.name}() body 里用了 solution,签名里没有"

@@ -179,6 +179,8 @@ def bench(
     no_flush: bool = typer.Option(False, "--no-flush", help="测速前不刷 L2"),
     skip_check: bool = typer.Option(False, "--skip-check", help="不先跑正确性"),
     ignore_requires: bool = typer.Option(False, "--ignore-requires", help="架构要求不满足也强行跑"),
+    solution: Optional[str] = typer.Option(None, "--solution", "-s",
+        help="跑 problems/<题>/solutions/<工具链>/<这个> 而不是 kernels/<名>/(验证参考答案用,不动用户的算子)"),
 ):
     """测速:预热 → 每次迭代前刷 L2 → CUDA event 计时 → 中位数/分位数 → GB/s 与 TFLOPS。"""
     root, cfg, tgt = _resolve(target)
