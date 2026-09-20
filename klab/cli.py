@@ -415,14 +415,17 @@ def ncu(
     full: bool = typer.Option(False, "--full", help="--set full(慢很多,replay 次数多)"),
     launches: int = typer.Option(1, help="每个 case 启动次数;ncu 对每次启动都做一轮 replay,默认 1"),
     open_gui: bool = typer.Option(False, "--open", help="完成后用本地 Nsight Compute 打开"),
+    solution: Optional[str] = typer.Option(None, "--solution", "-s",
+        help="跑 problems/<题>/solutions/<工具链>/<这个> 而不是 kernels/<名>/(验证参考答案用,不动用户的算子)"),
 ):
     """NCU 剖析:在后端跑 ncu,把 .ncu-rep 与文本报告拉回 runs/,自动渲染体检单。"""
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
-    _ncu_impl(root, cfg, tgt, kdir, case or [], full, launches, open_gui)
+    _ncu_impl(root, cfg, tgt, kdir, case or [], full, launches, open_gui, solution)
 
 
-def _ncu_impl(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, case: list[str], full: bool, launches: int, open_gui: bool) -> Path:
+def _ncu_impl(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, case: list[str], full: bool, launches: int,
+              open_gui: bool, solution: Optional[str] = None) -> Path:
     import shlex
 
     spec = KernelSpec.load(kdir)
@@ -437,7 +440,8 @@ def _ncu_impl(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, case: list
     case_args = " ".join(f"--case {c}" for c in case)
     cmd = (
         f"mkdir -p {remote_run} && ncu --target-processes all {kfilter}{sections} -f -o {remote_run}/ncu "
-        f"{py} -m klab.harness.runner --kernel {rel} --mode ncu --launches {launches} --out {remote_run}/result.json {case_args} "
+        f"{py} -m klab.harness.runner --kernel {rel} --mode ncu --launches {launches} --out {remote_run}/result.json "
+        f"{case_args} {' '.join(_sol(solution))} "
         f"&& ncu --import {remote_run}/ncu.ncu-rep --page details > {remote_run}/ncu-details.txt "
         f"&& ncu --import {remote_run}/ncu.ncu-rep --page raw --csv > {remote_run}/ncu-raw.csv"
     )

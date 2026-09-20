@@ -123,9 +123,14 @@ def test_every_cli_command_using_solution_also_declares_the_option():
     """`--solution` 加漏过一次:bench 的函数体里用了 solution,签名里却没有,一调就 NameError。
     CLI 命令没有本地测试会跑到它们,所以这里静态守一道。"""
     tree = ast.parse((ROOT / "klab" / "cli.py").read_text())
-    for fn in [n for n in tree.body if isinstance(n, ast.FunctionDef)]:
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    for name, fn in fns.items():
         uses = any(isinstance(n, ast.Name) and n.id == "solution" for n in ast.walk(fn))
         if not uses:
             continue
         names = [a.arg for a in fn.args.args + fn.args.kwonlyargs]
-        assert "solution" in names, f"klab {fn.name}() body 里用了 solution,签名里没有"
+        assert "solution" in names, f"klab {name}() body 里用了 solution,签名里没有"
+    # 另一半:跑算子的命令都该能指定参考答案,否则验证阶梯时只能往 kernels/ 里拷
+    for name in ("check", "bench", "ncu", "ptx", "run"):
+        names = [a.arg for a in fns[name].args.args + fns[name].args.kwonlyargs]
+        assert "solution" in names, f"klab {name} 少了 --solution"

@@ -15,7 +15,7 @@
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
 | tilelang | 4 | naive → swizzle → tiles → splitk |
-| cute | **2** | naive → atom(2026-09-20) |
+| cute | **3** | naive → atom → tiledcopy(2026-09-20) |
 | tk | **1** | 只有 `warp::mma_AB` |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
@@ -45,8 +45,10 @@
 - **CuTe DSL 的 atom 不叫 `SM80_*`**(那是 C++ CuTe 的命名)。Python DSL 里是
   `cutlass.cute.nvgpu.<warp|warpgroup|tcgen05>.MmaF16BF16Op` —— **同一个类名,三个命名空间**,
   换代就是换一行 import。第 3、4 项照着改即可。
-- 这一级**故意没动搬运**(还是逐元素循环),于是体检单判定是「两头都没跑满」、76% 的等待在等显存,
-  tensor core 只有 15%。**下一级该修的就是这个**(见第 6 项的 cute 主线)。
+- 搬运在 `2-tiledcopy` 里换成了 TiledCopy(合并访存修好,等显存的 stall 降 3.5 倍),但整体只快 14%:
+  瓶颈搬到了共享内存一侧(L1 56%→82%,mio_throttle 7%→30%),**显存全程只有 2%,从来不是它的问题**。
+- **向量化与逐元素谓词冲突**:`num_bits_per_copy=128` 会让 `cute.copy` 要求按向量给谓词,
+  而 K=777 的尾块跨在向量中间。CUTLASS 的解法是主循环 / 尾块拆两条路 —— 这是 cute 主线下一步。
 - atom 对操作数布局有硬要求:A、B 都必须 K 连续。B 是行主序 (K,N),所以搬进共享内存时要转置成 (N,K)。
 
 ### 2. tk × Hopper:`warp::mma_AB` → `warpgroup::mma_AB`
