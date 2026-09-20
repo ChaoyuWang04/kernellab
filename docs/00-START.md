@@ -2,7 +2,9 @@
 
 Mac 上写 GPU 算子,远端 GPU 上编译、跑、测速、抓 NCU,结果回流成一张固定模板的体检单。日常入口是 `klab web`(算子版 LeetCode),CLI 是它的全集。
 
-本页讲**系统怎么运转、改哪里、怎么验证**。agent 接到「测一下这个 kernel」时的操作流程在 [01-AGENT-PLAYBOOK.md](01-AGENT-PLAYBOOK.md);命令与契约的用法在 [README.md](../README.md)。
+本页讲**系统怎么运转、改哪里、怎么验证**。agent 接到「测一下这个 kernel」时的操作流程在 [01-AGENT-PLAYBOOK.md](01-AGENT-PLAYBOOK.md);**还没做的事与怎么做在 [02-NEXT.md](02-NEXT.md)**;命令与契约的用法在 [README.md](../README.md)。
+
+现在的规模:**一道题**(matmul)× **五种语言**(triton / tilelang / cuda / cute / tk)× **四张卡**(sm_80 / 90 / 100 / 120)× **六档形状**,18 份参考答案,全部上机验证过。
 
 ## 一、核心守则
 
@@ -35,7 +37,7 @@ uv run klab web            # 面板,http://127.0.0.1:8777,自动开浏览器
 新机器还需要:
 
 1. `~/.ssh/config` 里有 `5090home` 别名(ProxyCommand 在局域网与 FRP 间自动选路,私钥 `~/.ssh/home_5090_local_ed25519`);`ssh 5090home true` 通了再继续。
-2. Modal:`uv run modal setup` 登录一次,生成 `~/.modal.toml`。
+2. Modal:`uv run modal setup` 登录一次,生成 `~/.modal.toml`。三张云卡都走它:`modal-a100`(sm_80)、`modal-h100`(sm_90)、`modal-b200`(sm_100)。
 3. 每种工具链在每个后端第一次用前 `klab setup --target <后端> --toolchain <名>`;远端 `~/klab/{repo,envs,runs}` 可随时删掉重建。
 4. 本地 Nsight Compute GUI(`/Applications/NVIDIA Nsight Compute.app`)用于打开 `.ncu-rep`,非必需。
 
@@ -80,7 +82,7 @@ runs/<时间>-<算子>-<后端>-<模式>/
 | `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
 | `klab/harness/probe.py` | 设备属性 + 实测带宽 / matmul 吞吐 | 实测值手工填回 `targets.toml` 的 `peak_*` |
 | `klab/harness/cppext.py` | cuda / tk 工具链的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这;`spec_sources` 让接线把 torch/pybind 绑定文件一起编,用户的 `.cu` 就只写 CUDA |
-| `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个 |
+| `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个。**已接 triton / tilelang / cuda / tk;cute 接不上**(见 02-NEXT) |
 | `klab/kreport.py` | 体检单:raw CSV + details 文本 + 最近一次 bench → markdown | 指标名依赖 NCU 版本,tests 里守着 |
 | `klab/report.py`、`klab/compare.py` | 终端表格;对比表 | |
 | `klab/web.py` | 面板服务端:路由、白名单、markdown 子集转 HTML、源码快照、Monaco 取用 | 只读 `runs/` 与源码、只 fork 子进程;算子/后端/case 名一律先过白名单 |
@@ -175,3 +177,5 @@ pytest 覆盖的是不需要 GPU 的部分:配置、算子契约、工具链登�
 面板的 Monaco 版本钉在 `klab/web.py` 的 `MONACO_VERSION`。
 
 已验证可用的组合:torch 2.14.0+cu130、triton 3.8.0、tilelang 0.1.14、nvidia-cutlass-dsl 4.7.1、ThunderKittens main、monaco-editor 0.56.0。
+
+**编译器成熟度不一样,要量才知道**:同一份 `T.gemm`,TileLang 0.1.14 在 H100 上会用 `wgmma`,在 B200 上却退回 `mma.sync`;Triton 3.8 在 B200 上用了 `tcgen05`。升级工具链后值得重跑一遍 `klab ptx` 的四卡对照。
