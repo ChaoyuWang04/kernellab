@@ -94,34 +94,51 @@ Triton 里写 `tl.dot(a, b)` 就够,降到哪条指令由目标架构决定。**
 
 **体检单**:「切成多少块」那行会直接告诉你最后一波用掉几成位置、浪费多少时间。注意 3.01 波比 3.98 波糟得多 —— 小数部分越小,尾波越空。
 
-## 8. 换代:同一份代码在四张卡上降成什么
+## 8. 换代:五种语言,四张卡,谁真的用上了新硬件
 
-先看一个实测结果。**把第 0 级那份 65 行、一个字没改的 Triton 代码**,拿 `klab ptx` 在四张卡上各打一遍:
+这一节全是实测,没有一个字是推测。把每种语言的基线代码**一个字不改**,拿 `klab ptx` 在四张卡上各打一遍:
 
-| 卡 | 架构 | tensor core 指令 | 异步拷贝 | 其他 |
-|---|---|---|---|---|
-| A100 | sm_80 | `mma.sync`×64 | `cp.async`×35 | `ldmatrix`×24 |
-| 5090 | sm_120 | `mma.sync`×64 | `cp.async`×32 | `ldmatrix`×16, `stmatrix`×16 |
-| H100 | sm_90 | **`wgmma`×8** | `cp.async`×32 | `ldmatrix`×16 |
-| B200 | sm_100 | **`tcgen05`×13** | `cp.async`×43 | `mbarrier`×6 |
+| 语言 | 你写的那一句 | A100 sm_80 | 5090 sm_120 | H100 sm_90 | B200 sm_100 |
+|---|---|---|---|---|---|
+| **triton** | `tl.dot(a, b)` | `mma.sync` | `mma.sync` | **`wgmma`** | **`tcgen05`** |
+| **tilelang** | `T.gemm(A, B, C)` | `mma.sync` | `mma.sync` + **TMA** | **`wgmma`+TMA+`setmaxnreg`** | `mma.sync` + TMA + `setmaxnreg` |
+| **cuda** | `wmma::mma_sync(...)` | `wmma.mma` | `wmma.mma` | `wmma.mma` | `wmma.mma` |
+| **tk** | `warp::mma_AB(...)` | `mma.sync` | `mma.sync` | `mma.sync` | `mma.sync` |
 
-一行没改,`tl.dot` 自己变成了三种不同的指令。`wgmma`×8 对 `mma.sync`×64 —— 一条 warpgroup 指令顶八条,发射开销直接摊薄八倍。这是 Triton / TileLang 这类 DSL 最大的价值:**换代不用重写**。
+### 读这张表
 
-| 特性 | 最低架构 | 换来什么 | 怎么验 |
+**上面两行会换代,下面两行不会。** 区别只有一个:
+
+- `tl.dot` / `T.gemm` 说的是**「把这两块乘起来」** —— 你没点名指令,编译器就挑目标卡上最好的那条。
+- `wmma::mma_sync` / `warp::mma_AB` 说的是**「用这条指令」** —— 你点名了,编译器不能替你换。
+
+所以那份 CUDA 代码放到 B200 上,四万美元的卡跑得像 A100。**这不是 bug,是你自己写的。**
+
+### 三条更细的结论
+
+1. **TileLang 在 H100 上自动用满了 Hopper**:`wgmma` + TMA + `setmaxnreg`(warp specialization,一部分 warp 专职搬数、一部分专职算)。三样新特性,零行代码。
+2. **但 TileLang 在 B200 上没用 tcgen05**,退回了 `mma.sync` —— 而 Triton 3.8 在同一张卡上用上了。**「自动」也分成熟度**,而唯一能发现这件事的办法就是去量。
+3. **5090 有 TMA 但没有 wgmma**(sm_120 不是 sm_90 的超集)。TileLang 在它上面用了 TMA,tensor core 却还是 `mma.sync`。
+
+### 那「点名型」的语言怎么换代?
+
+**换一个名字就行,不用重写。** 这几种语言都把每一代的协议细节打包好了,你只是挑一块积木:
+
+| 语言 | Ampere | Hopper | 数据中心 Blackwell |
 |---|---|---|---|
-| `mma.sync` | sm_80 | warp 级同步 MMA | `klab ptx` |
-| TMA (`cp.async.bulk`) | sm_90 | 硬件做地址计算与越界补零的批量异步拷贝,省掉大量整数指令 | 同上 |
-| `wgmma` | sm_90 | warpgroup 级异步 MMA,一条顶八条 | 同上 |
-| warp specialization (`setmaxnreg`) | sm_90 | 一部分 warp 专职搬数、一部分专职算 | 同上 |
-| `tcgen05` + tmem | sm_100 | 第五代 tensor core,累加器住进专用内存,不再挤寄存器 | 同上 |
+| **tk** | `warp::mma_AB` | `warpgroup::mma_AB` | `tcgen05::mma` |
+| **cute** | `SM80_*` atom | `SM90_*` atom | `SM100_*` atom |
+| **cuda** | `wmma::mma_sync` | *官方答案:改用 CUTLASS* | *同左* |
 
-注意 **cc 数字不是超集关系**:5090 是 sm_120,数字最大,却没有 Hopper 的 `wgmma`;但它**有 TMA**。`meta.toml` 的 `requires.features` 就是按这张表拦不匹配的组合。
+CuTe 的 atom 名字长这样 —— `SM90_64x128x16_F32BF16BF16_SS`:Hopper 的、一条指令算 64×128×16、累加 fp32 输入 bf16、两个输入都从共享内存来。**挑中它,发哪条 `wgmma`、描述符怎么编码、数据怎么摆,全在这块积木里。**
 
-### 显式用某一代的特性:见参考答案 `5-tma`
+裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的答案就是「用 CUTLASS」。所以这个仓库里 **cuda 这一列到 Ampere 为止**,再往上走 CuTe —— 这本身就是一条该学的结论,不是我们偷懒。
 
-上面是「编译器替你换代」。想**显式**用某代特性,Triton 也给了 API —— `tl.make_tensor_descriptor` 就是 TMA。那一级实测出一件很要紧的事:
+### 显式用某一代:见参考答案 `5-tma`
 
-**在 A100(sm_80,没有 TMA 硬件)上,那份代码不报错、不变慢,它只是被静默降级成了普通 `cp.async`。**
+上面是「编译器替你换代」。想**显式**指定,Triton 给了 API(`tl.make_tensor_descriptor` 就是 TMA)。那一级实测出一件要紧的事:
+
+**在 A100(没有 TMA 硬件)上,那份代码不报错、不变慢,它只是被静默降级成了普通 `cp.async`。**
 
 代码照跑、结果照对,你完全看不出来。所以:
 
