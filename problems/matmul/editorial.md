@@ -143,7 +143,15 @@ CuTe DSL 里这件事尤其干净:**同一个类名 `MmaF16BF16Op` 在三个命�
 (注意别被 C++ 版的命名带偏:CUTLASS 的 C++ CuTe 里 atom 叫 `SM90_64x128x16_F32BF16BF16_SS` 这种,
 Python DSL 不用这套名字。本仓库走的是 Python DSL。)
 
-裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的答案就是「用 CUTLASS」。所以这个仓库里 **cuda 这一列到 Ampere 为止**,再往上是改 CUTLASS 的参数(tile 形状 / schedule / atom),或者直接走它的 Python 前端 —— 也就是本仓库 cute 这一列。**这本身就是一条该学的结论,不是我们偷懒。**
+裸 CUDA 到 Hopper 之后没有官方的手写封装(WMMA 只覆盖到 Ampere),NVIDIA 自己的答案就是「用 CUTLASS」。
+所以这个仓库里**手写的那条线到 Ampere 为止**,再往上换一种练法 —— 见参考答案 `6-cutlass-hopper`:
+不写 kernel,只填三行模板参数(TileShape / ClusterShape / KernelSchedule)。
+
+H100 实测,同一张卡上并排:**手写 WMMA 43.72 TFLOPS → 改 CUTLASS 参数 482.15 TFLOPS,快 11 倍。**
+`klab ptx` 说明了差距在哪:`wmma.mma×8`(Ampere)对 `wgmma×14 + cp.async.bulk×3 + mbarrier×32 + setmaxnreg×2`
+—— wgmma、TMA、warp specialization 三样一次到齐,一个都没写。
+
+**这本身就是一条该学的结论,不是我们偷懒。**
 
 ### 显式用某一代:见参考答案 `5-tma`
 
@@ -162,6 +170,31 @@ Python DSL 不用这套名字。本仓库走的是 Python DSL。)
 5090 实测 72 组候选:手写的 `128×128×32 / warps 4 / stages 3` 在三个形状上**没有一个是最优的**,而 autotune 三个形状全部追平或超过 cuBLAS。
 
 这不是说前面几级白学 —— 你得先知道有哪些旋钮、每个旋钮动的是体检单哪一行,才能把候选列对,也才能看懂搜出来的结果为什么快。
+
+## 哪一级在哪份答案里
+
+上面每条路线,在五种语言里各有落点。左边「参考答案」那一页按语言切,这里是索引:
+
+| 讲的是 | triton | tilelang | cuda | cute | tk |
+|---|---|---|---|---|---|
+| 朴素基线 | `0-naive` | `0-naive` | `0-naive` | `0-naive` | — |
+| 合并访存 | — | — | `1-coalesce` | (在 `2-tiledcopy` 里) | — |
+| 共享内存分块 | — | — | `2-smem` | — | `0-tiles` |
+| 寄存器分块 | — | — | `3-regtile` | — | — |
+| 多级流水 / 双缓冲 | (`num_stages`) | (`T.Pipelined`) | `4-doublebuf` | — | `2-hopper-tma` |
+| **用上 tensor core** | (`tl.dot`) | (`T.gemm`) | `5-tensorcore` | **`1-atom`** | `0-tiles` |
+| 搬运的 atom / TiledCopy | — | — | — | **`2-tiledcopy`** | — |
+| L2 swizzle | `1-swizzle` | `1-swizzle` | — | — | — |
+| 调占用率 / 分块 | `2-occupancy` | `2-tiles` | — | — | — |
+| split-K | `3-splitk` | `3-splitk` | — | — | — |
+| **autotune** | `4-autotune` | `4-autotune` | — | — | — |
+| **显式用 TMA** | `5-tma` | — | (CUTLASS 自带) | — | `2-hopper-tma` |
+| **换代到 Hopper** | (自动) | (自动) | **`6-cutlass-hopper`** | ⬜ | **`1-hopper-wgmma`** |
+| **换代到 Blackwell** | (自动) | ⚠️ 退回 mma.sync | ⬜ | ⬜ | **`3-blackwell-tcgen05`** |
+
+「(自动)」= 代码一个字不改,编译器按目标卡选指令,我们的活只是用 `klab ptx` 去量。
+「⬜」= 还没写。cute 的两格卡在一个未解的问题上,半成品在 `problems/matmul/wip/`;
+cuda × Blackwell 只要把 `6-cutlass-hopper` 里的 `Sm90` 换成 `Sm100`。
 
 ## 到哪一级算够
 
