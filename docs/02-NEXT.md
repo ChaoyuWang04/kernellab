@@ -16,7 +16,7 @@
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
 | tilelang | 4 | naive → swizzle → tiles → splitk |
 | cute | **3** | naive → atom → tiledcopy(2026-09-20) |
-| tk | **3** | tiles → hopper-wgmma → hopper-tma(2026-09-20) |
+| tk | **4** | tiles → hopper-wgmma → hopper-tma → blackwell-tcgen05(2026-09-20) |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
 
@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 | triton | ✅ | ✅ | ✅ | 自动,已四卡实测 |
 | tilelang | ✅ | ✅ | ⚠️ | 自动,但 0.1.14 在 B200 上退回 `mma.sync` |
-| tk | ✅ | ✅ | ❌ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
+| tk | ✅ | ✅ | ✅ | 换命名空间(`warp::` → `warpgroup::` → `tcgen05::`) |
 | cute | ✅ | ❌ | ❌ | 换命名空间(`warp` → `warpgroup` → `tcgen05`) |
 | cuda | ✅ | ❌ | ❌ | WMMA 只到 Ampere,再往上是 CUTLASS |
 
@@ -69,9 +69,17 @@ H100 实测:`mma.sync×32 / ldmatrix×20` → `wgmma×7 / ldmatrix×0`。**ldmat
 TK 自带 level_01..08 的 Hopper 阶梯。**还剩两级可抄**:level_07 = work partitioning,
 level_08 = 多 consumer warpgroup(生产者 warp 专职搬、消费者 warpgroup 专职算)。
 
-### 3. tk × Blackwell:`tcgen05::mma`
+### ~~3. tk × Blackwell~~ ✅ 2026-09-20
 
-同上,入口在 `include/ops/group/mma/tcgen05.cuh`。只能在 `modal-b200` 上验。
+`problems/matmul/solutions/tk/3-blackwell-tcgen05.cu`,照抄 `educational_b200/level_06.cu`。
+B200 实测 **294.98 TFLOPS**(官方 README 标 293,对上了),`tcgen05×46`,五档全过。
+相对 0-tiles 快 1.73×,但只有 torch 的 0.20% —— cuBLAS 在 B200 上是 ~1510 TFLOPS。
+
+换代换的不只是命名空间:**累加器从寄存器搬进了 tensor memory**(`tt<float,128,128>`),
+协议也从「一句 mma」变成「三个信号量 + mm/mma + commit + tensor_load_wait」。
+
+**官方阶梯还剩三级可抄**(README 里有实测值):level_07 warp specialization 731 TFLOPs、
+level_08 epilogue 流水 1050、level_09 2-CTA cluster 1285。
 
 ### 4. cute × Hopper / Blackwell:换命名空间
 

@@ -134,10 +134,19 @@ def _from_cppext(spec, mod) -> dict[str, str]:
     """
     import subprocess
 
+    import torch
+
+    # 只认**当前这张卡**的产物。Modal 把编译缓存挂在共享 Volume 上,`{名}-*` 通配会把
+    # 别的架构(比如上次在 H100 上编的 sm_90a)一起捞进来,而它们的 .so 同名,
+    # 后读到的会把本次的覆盖掉 —— 于是在 B200 上打 PTX 却报出 wgmma。
+    major, minor = torch.cuda.get_device_capability(0)
     cache = Path(os.path.expanduser("~/.cache/klab"))
-    sos = sorted(p for d in cache.glob(f"{spec.name}-*") if d.is_dir() for p in d.glob("*.so"))
+    dirs = [cache / f"{spec.name}-sm_{major}{minor}{suf}" for suf in ("a", "")]
+    sos = sorted(p for d in dirs if d.is_dir() for p in d.glob("*.so"))
     if not sos:
-        raise SystemExit(f"{cache}/{spec.name}-*/ 下没有编译产物:先跑一次 klab check")
+        raise SystemExit(
+            f"{cache}/{spec.name}-sm_{major}{minor}[a]/ 下没有编译产物:先在这张卡上跑一次 klab check"
+        )
     out: dict[str, str] = {}
     for so in sos:
         r = subprocess.run(["cuobjdump", "-ptx", str(so)], capture_output=True, text=True)
