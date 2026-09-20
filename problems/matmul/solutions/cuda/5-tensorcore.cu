@@ -4,8 +4,9 @@
 // 一条 mma 指令算一整块 16×16×16,取代 4096 次标量 FMA。
 //
 // 这里用 WMMA(nvcuda::wmma):声明 fragment、load_matrix_sync 装载、mma_sync 乘加。
-// 它编译后就是 mma.sync —— 用 klab ptx 可以直接数出来。生产级实现会手写
-// mma.sync + ldmatrix 以拿到更细的布局控制,但那是另一个量级的复杂度。
+// 它编译后就是 mma.sync —— 用 klab ptx 可以直接数出来。WMMA 是 NVIDIA 自己给的
+// 官方封装,也是裸 CUDA 用 Ampere tensor core 的推荐写法:这一级不需要你懂
+// fragment 在寄存器里怎么摆,那些都封在 load_matrix_sync 里了。
 //
 // 分块:一个 block 算 128×128,8 个 warp 排成 4×2,每个 warp 算 32×64
 //
@@ -18,8 +19,11 @@
 //
 // 还差的几级(Triton 的 tl.dot 背后替你做了的):BK 加大到 32/64 并让每个 warp
 // 持有更多累加器 fragment 来摊薄同步;共享内存 swizzle 彻底消掉 bank 冲突;
-// cp.async 把搬运交给 DMA;最后是手写 mma.sync + ldmatrix,省掉 fragment
-// 经共享内存往返的那一趟。
+// cp.async 把搬运交给 DMA。
+//
+// 再往下就不是手写的领域了 —— 把这几件事同时做对、还要跟上每一代新硬件,
+// NVIDIA 自己的答案是 CUTLASS。裸 CUDA 这一列到这一级为止,这是官方的分界线,
+// 不是我们偷懒:WMMA 只覆盖到 Ampere,Hopper 的 wgmma 没有对应的手写封装。
 //
 // 顺带一个已经修过的坑:B 的 fragment 在 i 循环里是不变的,最初写成在内层装载,
 // 白装了 WM/16 倍 —— 改完只快了 0.7%,说明瓶颈另有其人,别凭直觉优化。
