@@ -16,7 +16,7 @@
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
 | tilelang | 4 | naive → swizzle → tiles → splitk |
 | cute | **3** | naive → atom → tiledcopy(2026-09-20) |
-| tk | **2** | tiles → hopper-wgmma(2026-09-20) |
+| tk | **3** | tiles → hopper-wgmma → hopper-tma(2026-09-20) |
 
 **轴二 · 换代**(Ampere → Hopper → Blackwell)
 
@@ -61,10 +61,13 @@ H100 实测:`mma.sync×32 / ldmatrix×20` → `wgmma×7 / ldmatrix×0`。**ldmat
 就是「不再过寄存器」的直接证据。但速度只涨 3%~21%,**deepK 还倒退 30%** ——
 因为 `mma_async_wait()` 紧跟在 `mma_AB` 后面,把异步硬用成了同步。
 
+**接着做了 `2-hopper-tma`**(照 level_06):TMA + 双缓冲补上流水,4096³ 从 136 →
+**319.54 TFLOPS**(0.17× → 0.41× torch),deepK 从倒退的 16.52 → 47.58。
+`ld.global` 整族消失,换成 `cp.async.bulk×8 + mbarrier×8`。
+
 **照抄的官方源**:`envs/tk/ThunderKittens/kernels/gemm/educational_h100/`,
-TK 自带 level_01..08 的 Hopper 阶梯,level_05 就是 WGMMA。**后面几级直接往下抄**:
-level_06 = TMA + 双缓冲(正是本级欠的那一课),level_07 = work partitioning,
-level_08 = 多 consumer warpgroup。
+TK 自带 level_01..08 的 Hopper 阶梯。**还剩两级可抄**:level_07 = work partitioning,
+level_08 = 多 consumer warpgroup(生产者 warp 专职搬、消费者 warpgroup 专职算)。
 
 ### 3. tk × Blackwell:`tcgen05::mma`
 
