@@ -31,16 +31,22 @@ def _split_k() -> int:
 
 
 def _compiled(M, N, K, dtype, out_dtype):
-    key = (M, N, K, dtype, out_dtype, k.BLOCK_M, k.BLOCK_N, k.BLOCK_K, k.NUM_STAGES, k.THREADS, _split_k())
+    tunables = tuple(getattr(k, n, None) for n in ("BLOCK_M", "BLOCK_N", "BLOCK_K", "NUM_STAGES", "THREADS"))
+    key = (M, N, K, dtype, out_dtype, *tunables, _split_k())
     if key not in _cache:
-        # 普通情况让 TileLang 自己分配输出(out_idx=[-1]);
-        # split-K 时输出必须由我们预先清零后传进去,所以不能标 out_idx。
-        jit = tilelang.jit if _split_k() > 1 else (lambda f: tilelang.jit(out_idx=[-1])(f))
+        if hasattr(k, "build"):
+            # 算子自己拥有编译过程。autotune 需要这个 —— 它要在候选之间反复编译与计时,
+            # 光返回一个 prim_func 不够。契约:build(M, N, K, dtype, accum, out_dtype) -> 可调用的 kernel。
+            _cache[key] = k.build(M, N, K, dtype, "float", out_dtype)
+        else:
+            # 普通情况让 TileLang 自己分配输出(out_idx=[-1]);
+            # split-K 时输出必须由我们预先清零后传进去,所以不能标 out_idx。
+            jit = tilelang.jit if _split_k() > 1 else (lambda f: tilelang.jit(out_idx=[-1])(f))
 
-        @jit
-        def build():
-            return k.gemm(M, N, K, dtype, "float", out_dtype)
-        _cache[key] = build()
+            @jit
+            def build():
+                return k.gemm(M, N, K, dtype, "float", out_dtype)
+            _cache[key] = build()
     return _cache[key]
 
 

@@ -14,7 +14,7 @@
 |---|---|---|
 | triton | 6 | naive → swizzle → occupancy → splitk → autotune → tma |
 | cuda | 6 | naive → coalesce → smem → regtile → doublebuf → tensorcore(WMMA) |
-| tilelang | 4 | naive → swizzle → tiles → splitk |
+| tilelang | **5** | naive → swizzle → tiles → splitk → autotune(2026-09-20) |
 | cute | **3** | naive → atom → tiledcopy(2026-09-20) |
 | tk | **4** | tiles → hopper-wgmma → hopper-tma → blackwell-tcgen05(2026-09-20) |
 
@@ -108,7 +108,9 @@ atom 名字长这样 —— `SM90_64x128x16_F32BF16BF16_SS`:Hopper 的 / 一条�
 
 ### 6. 补厚主线阶梯
 
-- **tilelang 还差 autotune**:`tilelang.autotune` 要求 kernel 自己拥有编译过程,和现有契约不同,要扩接线。
+- ~~tilelang autotune~~ ✅ 2026-09-20。接线扩了一条分支:算子模块有 `build()` 就用它
+  (`build(M,N,K,dtype,accum,out_dtype) -> 可调用的 kernel`),没有就照旧 jit `gemm()`。
+  实测:手调那组在 4096³ 上追平 autotune,但 deepK 上 0.15× vs 0.55×(差 3.6 倍)。
 - **cute / tk 各还差几级**:swizzle、调分块、split-K 这类,照 triton 与 tilelang 的现成阶梯改。
 
 ### 7. 第二道题(新算子)
