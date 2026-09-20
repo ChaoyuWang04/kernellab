@@ -121,11 +121,22 @@
 
 ---
 
-## D10. cute 的 PTX 先不接
+## D10. cute 的 PTX 怎么取(2026-09-20 解决)
 
-**决定**:`klab ptx` 支持 triton / tilelang / cuda / tk 四种,CuTe DSL 不接。用户已同意。
+**决定**:五种工具链全接上了,取法各不相同。
 
-**理由**:CUTLASS 4.7.1 的 `JitFunctionArtifacts.PTX` 字段存在但填不上(打开 `DeviceTarget` 选项也是 `None`),`dump_to_object` 出来的是宿主 ELF,`cuobjdump` 抠不出来。等上游修好再说。
+**曾经的死路**:`JitFunctionArtifacts.PTX` 字段存在但填不上(打开 `DeviceTarget` 选项也是 `None`),`dump_to_object` 出来的是宿主 ELF,`cuobjdump` 抠不出来。一度记成「接不上」。
+
+**真正的口子是环境变量**,藏在 `cutlass/base_dsl/env_manager.py`:
+
+```bash
+CUTE_DSL_KEEP=ptx          # 还可以是 cubin / sass / ir,逗号分隔
+CUTE_DSL_DUMP_DIR=<目录>
+```
+
+**必须在 `import cutlass` 之前设**——env_manager 在导入时就把环境读进去了,之后再设没用。所以 `runner.py` 在 `spec.load_module()` 之前调 `ptxdump.prepare(spec)`,而不是在取 PTX 的时候才设。
+
+**教训**:「上游没实现」和「上游的开关我没找到」是两回事。下次再遇到「这个工具链取不到 X」,先 `grep -rhoE '<PREFIX>_[A-Z_]+'` 把它的环境变量全列出来看一遍。
 
 ---
 

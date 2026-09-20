@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import statistics
 import sys
@@ -172,6 +173,24 @@ def do_ncu(spec: KernelSpec, mod, cases: list[dict], launches: int) -> list[dict
     return results
 
 
+def _use_solution(spec: KernelSpec, sid: str) -> None:
+    """--solution:这一跑用参考答案里的那一份,而不是 kernels/<名>/ 里的。
+
+    验证阶梯时不必把答案拷进用户的目录 —— 那是用户的地方,拷进去就等于替他改代码,
+    而且改完常常忘了还原。harness 侧认的是 KLAB_KERNEL_FILE(见 spec.override_file)。
+    """
+    from klab.harness.spec import repo_root_of
+
+    root = repo_root_of(spec.dir)
+    d = root / "problems" / spec.problem / "solutions" / spec.toolchain
+    hits = [p for p in sorted(d.glob(f"{sid}.*")) if p.suffix in (".py", ".cu")]
+    if not hits:
+        have = ", ".join(p.stem for p in sorted(d.glob("*"))) or "(一个都没有)"
+        raise SystemExit(f"{d} 下没有 {sid}.(py|cu);现有:{have}")
+    os.environ["KLAB_KERNEL_FILE"] = str(hits[0])
+    print(f"[solution] 这一跑用 {hits[0].relative_to(root)},kernels/{spec.name}/ 原样不动", flush=True)
+
+
 def do_ptx(spec: KernelSpec, mod, cases: list[dict], out_dir: Path) -> list[dict]:
     """先跑一次把 JIT 编译触发掉,再从编译缓存取 PTX,按世代统计指令条数。只用第一个 case:
     形状是运行期参数,PTX 只随 constexpr(tile 常量)变,多跑几个 case 拿到的是同一份。"""
@@ -233,12 +252,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-flush", action="store_true", help="测速时不刷 L2")
     ap.add_argument("--launches", type=int, default=3, help="ncu 模式下每个 case 启动次数")
     ap.add_argument("--ignore-requires", action="store_true", help="架构要求不满足也继续")
+    ap.add_argument("--solution", default=None,
+                    help="跑 problems/<题>/solutions/<工具链>/<这个>.<后缀> 而不是 kernels/<名>/ 里的算子")
     args = ap.parse_args(argv)
 
     if not torch.cuda.is_available():
         raise SystemExit("torch.cuda 不可用:检查驱动或 venv 里的 torch 是否为 CUDA 版")
     spec = KernelSpec.load(Path(args.kernel))
     check_requirements(spec, args.ignore_requires)
+    if args.solution:
+        _use_solution(spec, args.solution)
+    if args.mode == "ptx":
+        from klab.harness import ptxdump
+
+        ptxdump.prepare(spec)          # cute 要在 import cutlass 之前设环境变量,晚了没用
     mod = spec.load_module()
     cases = spec.select_cases(args.case)
 

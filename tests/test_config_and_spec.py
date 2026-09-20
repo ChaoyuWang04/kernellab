@@ -95,3 +95,25 @@ def test_arch_features_sm120_has_tma_but_not_wgmma():
     assert "tma" in table[12], "klab ptx 在 5090 上实测到了 cp.async.bulk.tensor"
     assert "wgmma" not in table[12] and "tcgen05" not in table[12]
     assert "wgmma" in table[9] and "tcgen05" in table[10]
+
+
+def test_override_file_lets_a_solution_stand_in_for_the_users_kernel(monkeypatch):
+    """`--solution` 靠 KLAB_KERNEL_FILE 生效。没有它的话,验证参考答案就得把答案拷进
+    kernels/<名>/ —— 那是用户的目录,拷进去等于替他改代码,而且改完常常忘了还原。"""
+    from klab.harness.spec import override_file
+
+    monkeypatch.delenv("KLAB_KERNEL_FILE", raising=False)
+    assert override_file() is None
+    monkeypatch.setenv("KLAB_KERNEL_FILE", "/tmp/x/1-atom.py")
+    assert override_file() == Path("/tmp/x/1-atom.py")
+
+
+def test_every_spec_can_name_its_solutions_directory():
+    """--solution 按 problems/<题>/solutions/<工具链>/ 找答案;meta.toml 的 problem 与
+    toolchain 拼错了,这条路径就永远是空的。"""
+    root = Path(__file__).resolve().parents[1]
+    for meta in sorted((root / "specs").glob("*/meta.toml")):
+        spec = KernelSpec.load(meta.parent)
+        d = root / "problems" / spec.problem / "solutions" / spec.toolchain
+        assert d.is_dir(), f"{meta.parent.name}: {d.relative_to(root)} 不存在"
+        assert list(d.glob("*.py")) or list(d.glob("*.cu")), f"{d.relative_to(root)} 里没有答案"

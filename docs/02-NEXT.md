@@ -41,7 +41,7 @@
 
 **怎么做**:用 `TiledMma` / `TiledCopy` 描述「数据怎么切、谁搬哪块、怎么喂 tensor core」,atom 选 `SM80_16x8x16_F32BF16BF16F32_TN` 这一族。官方 dense GEMM 示例可以从 git 历史捞(见 [D13](03-DECISIONS.md#d13-历史里能捞的东西))。
 
-**注意**:`klab ptx` 接不上 cute(见 [D10](03-DECISIONS.md#d10-cute-的-ptx-先不接)),这一级只能靠体检单的 tensor core 利用率 + 速度变化来验证,docstring 里要写明这个限制。
+**对照基线已经量好了**(2026-09-20,5090):现在这份 `0-naive` 的 PTX 只有 85 行,`fma×1 / ld.global×2 / st.global×1`,判定「没有任何标志指令」。atom 版跑出 `mma.sync` 就算这一级成了。
 
 ### 2. tk × Hopper:`warp::mma_AB` → `warpgroup::mma_AB`
 
@@ -88,7 +88,6 @@ matmul 这道题**本质上触发不了**体检单「卡在搬数据上」那个
 
 ## 三、已知的限制(别重复踩)
 
-- **`klab ptx` 接不上 cute** —— 见 [D10](03-DECISIONS.md#d10-cute-的-ptx-先不接)。用户已同意先不接,受影响的是第 1、4 项的验证手段。
 - **TK 要求形状是 tile 尺寸的整数倍**,所以 `specs/matmul_tk/` 的 case 比别人少一档(没有 1000x999x777)。这是 TK 的设计取舍,不是 bug。
 - **TileLang 0.1.14 在 B200 上不用 tcgen05**,退回 `mma.sync`(Triton 3.8 会用)。想在 TileLang 上练 Blackwell,先确认新版本有没有支持。
 - 其余的坑全在 [04-PITFALLS.md](04-PITFALLS.md),改相关代码前先看。
@@ -96,6 +95,8 @@ matmul 这道题**本质上触发不了**体检单「卡在搬数据上」那个
 ## 四、怎么验证一级写完了
 
 1. `uv run pytest` 全绿
-2. `klab run <算子> --target <该级需要的卡>` —— check 全过、bench 有数
-3. `klab ptx <算子> --target <同上>` —— **确认指令真的换了**(换代类答案的唯一证据;cute 除外,写明限制)
+2. `klab run <算子> -s <序号-名字> --target <该级需要的卡>` —— check 全过、bench 有数
+3. `klab ptx <算子> -s <序号-名字> --target <同上>` —— **确认指令真的换了**(换代类答案的唯一证据)
+
+`--solution/-s` 让这两跑用 `problems/<题>/solutions/` 里的那一份,**`kernels/<名>/` 原样不动** —— 别再把答案拷进用户的目录验证了。
 4. 把实测数字写进那一级的 docstring,**不编造单调递增的阶梯**。没收益就如实写没收益并解释为什么 —— 现成的反例见 [D8](03-DECISIONS.md#d8-参考答案的结论必须是实测的)

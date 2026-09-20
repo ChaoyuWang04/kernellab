@@ -181,13 +181,52 @@ def _from_tilelang(spec, mod) -> dict[str, str]:
     return out
 
 
-# 一种工具链一个取法。cute 还没接:4.7.1 的 JitFunctionArtifacts 有 PTX 字段但填不上
-# (DeviceTarget 选项打开也还是 None),dump_to_object 出来的是宿主 ELF,cuobjdump 抠不出。
+_CUTE_DUMP: Path | None = None   # prepare() 建的临时目录,_from_cute() 去里面捡 .ptx
+
+
+def prepare(spec) -> None:
+    """有些工具链必须在 import 之前就把「留下 PTX」打开 —— 目前只有 cute。
+
+    CuTe DSL 的环境变量在 `import cutlass` 时就被读进 env_manager,之后再设没用。
+    所以 runner 在 spec.load_module() 之前调这个函数。对其他工具链是空操作。
+    """
+    global _CUTE_DUMP
+    if spec.toolchain != "cute":
+        return
+    import tempfile
+
+    _CUTE_DUMP = Path(tempfile.mkdtemp(prefix="klab-cute-ptx-"))
+    os.environ["CUTE_DSL_KEEP"] = "ptx"          # 还可以是 cubin / sass / ir
+    os.environ["CUTE_DSL_DUMP_DIR"] = str(_CUTE_DUMP)
+
+
+def _from_cute(spec, mod) -> dict[str, str]:
+    """CuTe DSL:靠 CUTE_DSL_KEEP=ptx 让编译器把 PTX 留在 CUTE_DSL_DUMP_DIR 里。
+
+    产物名字是「函数名 + 整个签名 + 架构」,长得没法看,这里截到第一个 _Tensor 之前。
+    """
+    if _CUTE_DUMP is None:
+        raise SystemExit("cute 取 PTX 前必须先调 ptxdump.prepare(spec)(要在 import cutlass 之前)")
+    files = sorted(_CUTE_DUMP.rglob("*.ptx"))
+    if not files:
+        raise SystemExit(
+            f"{_CUTE_DUMP} 下没有 .ptx:确认 cute.compile 真的跑了一次"
+            "(接线按形状缓存编译结果,进程内第一次调用才会编)"
+        )
+    out: dict[str, str] = {}
+    for i, f in enumerate(files):
+        name = f.name.split(".sm_")[0].split("_Tensor")[0] or spec.name
+        out[name if len(files) == 1 else f"{name}#{i}"] = f.read_text()
+    return out
+
+
+# 一种工具链一个取法。
 _COLLECTORS = {
     "triton": _from_triton,
     "tilelang": _from_tilelang,
     "cuda": _from_cppext,
     "tk": _from_cppext,
+    "cute": _from_cute,
 }
 
 

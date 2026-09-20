@@ -80,6 +80,11 @@ def _run_id(kernel: str, target: str, mode: str) -> str:
     return f"{time.strftime('%Y%m%d-%H%M%S')}-{kernel}-{target}-{mode}"
 
 
+def _sol(solution: Optional[str]) -> list[str]:
+    """--solution 透传给 harness。见 klab/harness/runner.py 的 _use_solution。"""
+    return [f"--solution {solution}"] if solution else []
+
+
 def _remote_run(root: Path, cfg: TargetConfig, tgt: Target, kdir: Path, mode: str,
                 cases: list[str], extra: list[str], ncu_prefix: str = "") -> Path:
     spec = KernelSpec.load(kdir)
@@ -153,10 +158,12 @@ def check(
     target: Optional[str] = TargetOpt,
     case: Optional[list[str]] = typer.Option(None, "--case", "-c"),
     ignore_requires: bool = typer.Option(False, "--ignore-requires", help="架构要求不满足也强行跑"),
+    solution: Optional[str] = typer.Option(None, "--solution", "-s",
+        help="跑 problems/<题>/solutions/<工具链>/<这个> 而不是 kernels/<名>/(验证参考答案用,不动用户的算子)"),
 ):
     """正确性:与 kernel.py 的 reference() 逐 case 比对。"""
     root, cfg, tgt = _resolve(target)
-    extra = ["--ignore-requires"] if ignore_requires else []
+    extra = (["--ignore-requires"] if ignore_requires else []) + _sol(solution)
     out = _remote_run(root, cfg, tgt, _kernel_dir(root, kernel), "check", case or [], extra)
     ok = print_result(out / "result.json", cfg)
     raise typer.Exit(0 if ok else 1)
@@ -176,7 +183,7 @@ def bench(
     """测速:预热 → 每次迭代前刷 L2 → CUDA event 计时 → 中位数/分位数 → GB/s 与 TFLOPS。"""
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
-    ign = ["--ignore-requires"] if ignore_requires else []
+    ign = (["--ignore-requires"] if ignore_requires else []) + _sol(solution)
     if not skip_check:
         out = _remote_run(root, cfg, tgt, kdir, "check", case or [], ign)
         if not print_result(out / "result.json", cfg):
@@ -218,6 +225,8 @@ def run(
     iters: int = typer.Option(50),
     ignore_requires: bool = typer.Option(False, "--ignore-requires"),
     open_gui: bool = typer.Option(False, "--open"),
+    solution: Optional[str] = typer.Option(None, "--solution", "-s",
+        help="跑 problems/<题>/solutions/<工具链>/<这个> 而不是 kernels/<名>/(验证参考答案用,不动用户的算子)"),
 ):
     """一条龙:check → bench → ncu,最后打印体检单。agent 接到「测一下这个 kernel」默认用它。
 
@@ -230,7 +239,7 @@ def run(
     kdir = _kernel_dir(root, kernel)
     spec = KernelSpec.load(kdir)
     rel = kdir.relative_to(root).as_posix()
-    ign = ["--ignore-requires"] if ignore_requires else []
+    ign = (["--ignore-requires"] if ignore_requires else []) + _sol(solution)
     ncu_case = case or [spec.cases[0]["name"]]
 
     rids = {m: _run_id(spec.name, cfg.name, m) for m in ("check", "bench", "ncu")}
@@ -318,6 +327,8 @@ def ptx(
     target: Optional[str] = TargetOpt,
     case: Optional[list[str]] = typer.Option(None, "--case", "-c", help="不给则用第一个 case;PTX 只随 tile 常量变,换 case 拿到的是同一份"),
     ignore_requires: bool = typer.Option(False, "--ignore-requires"),
+    solution: Optional[str] = typer.Option(None, "--solution", "-s",
+        help="跑 problems/<题>/solutions/<工具链>/<这个> 而不是 kernels/<名>/(验证参考答案用,不动用户的算子)"),
 ):
     """dump PTX 并按世代统计指令:确认这份 kernel 到底降到了哪一代的 tensor core 与异步拷贝指令。
 
@@ -326,7 +337,7 @@ def ptx(
     root, cfg, tgt = _resolve(target)
     kdir = _kernel_dir(root, kernel)
     spec = KernelSpec.load(kdir)
-    extra = ["--ignore-requires"] if ignore_requires else []
+    extra = (["--ignore-requires"] if ignore_requires else []) + _sol(solution)
     out = _remote_run(root, cfg, tgt, kdir, "ptx", case or [spec.cases[0]["name"]], extra)
     _print_ptx(out)
     console.print(f"[dim]PTX 原文 {out / 'ptx'}[/]")

@@ -39,10 +39,13 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
     spec_sources 是 specs/<名>/ 下的文件,一起编进来。torch / pybind 的绑定样板放这里,
     用户的 .cu 就只剩 __global__ kernel 与启动它的那几行,不必 include torch。
     """
-    from klab.harness.spec import kernel_dir_of
+    from klab.harness.spec import kernel_dir_of, override_file
 
     sdir = Path(spec_file).resolve().parent
     kdir = kernel_dir_of(sdir)
+    over = override_file()
+    if over:                       # --solution:第一个源文件换成参考答案那一份,其余(多文件算子)照旧
+        sources = [str(over)] + list(sources[1:])
     major, minor = _arch()
     arch = f"sm_{major}{minor}"
     build = Path(os.path.expanduser(f"~/.cache/klab/{name}-{arch}"))
@@ -69,7 +72,8 @@ def load_extension(name: str, spec_file: str, sources: list[str], tk: bool = Fal
     return load(
         name=name,
         extra_ldflags=ldflags,
-        sources=[str(kdir / s) for s in sources] + [str(sdir / s) for s in (spec_sources or [])],
+        sources=[s if os.path.isabs(s) else str(kdir / s) for s in sources]
+                + [str(sdir / s) for s in (spec_sources or [])],
         extra_cuda_cflags=cflags,
         extra_include_paths=includes,
         build_directory=str(build),

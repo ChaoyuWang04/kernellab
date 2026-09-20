@@ -29,7 +29,7 @@
 - PTX 里出现 `stmatrix` **不代表**用上了 Hopper:它 sm_90 起就有,5090 照样发。判定只认标志指令。
 - `nvcuda::wmma` 在 PTX 里是 `wmma.mma.sync`,**不是** `mma.sync` —— 漏了这一族会把手写 WMMA 的 kernel 判成「没走 tensor core」。
 - nvcc 的 `-gencode` 只写 `code=sm_XX` 时产物里不嵌 PTX,`cuobjdump -ptx` 什么也抠不出来;要 `code=[sm_XX,compute_XX]`。
-- 每种工具链取 PTX 的办法都不一样:triton 读 `JITFunction.device_caches` 里的 `asm['ptx']`;tilelang 用 `JITKernel._get_ptx()`;cuda / tk 用 `cuobjdump -ptx` 抠 `.so`。CuTe DSL 4.7.1 取不到(见 [D10](03-DECISIONS.md#d10-cute-的-ptx-先不接))。
+- 每种工具链取 PTX 的办法都不一样:triton 读 `JITFunction.device_caches` 里的 `asm['ptx']`;tilelang 用 `JITKernel._get_ptx()`;cuda / tk 用 `cuobjdump -ptx` 抠 `.so`;cute 靠环境变量 `CUTE_DSL_KEEP=ptx`,**且必须在 `import cutlass` 之前设**(见 [D10](03-DECISIONS.md#d10-cute-的-ptx-怎么取2026-09-20-解决))。
 - Triton 3.8 的编译缓存是 `JITFunction.device_caches`(旧版叫 `cache`),device → tuple → dict 嵌套,层级各版本不同;`ptxdump._walk()` 按容器递归找叶子,不写死结构。
 
 ## 工具链

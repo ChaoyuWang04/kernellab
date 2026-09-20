@@ -71,7 +71,7 @@ runs/<时间>-<算子>-<后端>-<模式>/
 | `klab/harness/spec.py` | `specs/<名>/meta.toml` 与 `spec.py` 的契约;`kernel_module()` 按目录名导入 `kernels/<名>/kernel.py` | 契约变了要同步 README、playbook 与 tests |
 | `klab/harness/probe.py` | 设备属性 + 实测带宽 / matmul 吞吐 | 实测值手工填回 `targets.toml` 的 `peak_*` |
 | `klab/harness/cppext.py` | cuda / tk 的 nvcc 现场编译 | 架构后缀、TK 宏、缓存目录都在这;`spec_sources` 让接线把 torch/pybind 绑定一起编,用户的 `.cu` 就只写 CUDA |
-| `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个。已接 triton / tilelang / cuda / tk,cute 接不上 |
+| `klab/harness/ptxdump.py` | 取 PTX、按指令族计数、判定命中世代 | `PTX_FAMILIES` 里只有标志指令进判定;取法在 `_COLLECTORS`,一种工具链一个。五种工具链全接上了;cute 靠 `prepare()` 在 import 前设 `CUTE_DSL_KEEP=ptx` |
 | `klab/kreport.py` | 体检单:raw CSV + details 文本 + 最近一次 bench → markdown | 指标名依赖 NCU 版本,tests 里守着 |
 | `klab/report.py`、`klab/compare.py` | 终端表格;对比表 | |
 | `klab/web.py` | 面板服务端:路由、白名单、markdown 子集转 HTML、源码快照、Monaco 取用 | 只读 `runs/` 与源码、只 fork 子进程;算子/后端/case 名一律先过白名单 |

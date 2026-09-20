@@ -41,6 +41,7 @@ uv run klab check  matmul_triton_ampere        # 只看正确性
 uv run klab bench  matmul_tilelang --target modal-h100   # 先 check 再测速,报「相对 torch」的倍数
 uv run klab ncu    matmul_cuda --case 8192-bf16 --open   # NCU,拉回报告并用本地 Nsight Compute 打开
 uv run klab ptx    matmul_tk                   # dump PTX,按世代统计 mma.sync / wgmma / tcgen05 等
+uv run klab run    matmul_cute -s 1-atom      # --solution:跑参考答案那一份,kernels/<名>/ 原样不动
 uv run klab report runs/<某次 ncu 运行>         # 重新渲染体检单
 uv run klab compare matmul_triton_ampere matmul_tilelang   # 跨语言 / 跨后端对比表(读 runs/,不联网)
 uv run klab sweep  matmul_triton_ampere --case 4096-bf16   # 按 meta.toml [sweep] 扫参
@@ -50,6 +51,8 @@ uv run klab exec   "nvidia-smi" --target modal-h100        # 在后端执行一�
 ```
 
 `<算子>` 可以写名字、`kernels/<名>`、`specs/<名>` 或其中任一文件。`--target` 不给就用 `targets.toml` 的默认后端。
+
+`--solution/-s <序号-名字>`(check / bench / ptx / run 都有)把这一跑的算子换成 `problems/<题>/solutions/<工具链>/` 里的那一份,**`kernels/<名>/` 一个字节都不动**。写参考答案时用它验证,不必把答案拷进用户的目录。
 
 每次运行在 `runs/<时间>-<算子>-<后端>-<模式>/` 落一份 `result.json`;NCU 另有 `ncu.ncu-rep`(GUI 打开)、`ncu-details.txt`(编辑器里直接读)、`ncu-raw.csv`。`runs/` 不进 git。
 
@@ -175,7 +178,7 @@ uv run klab ptx matmul_triton_ampere   # 判定:命中世代 Ampere(mma.sync×64
 
 「命中世代」只看**标志指令**:`mma.sync` / `wmma.mma` / `cp.async`(Ampere)、`wgmma` / `cp.async.bulk`(Hopper)、`tcgen05`(数据中心 Blackwell)。`ldmatrix` / `stmatrix` / `mbarrier` / `setmaxnreg` 是辅助指令,只报条数不进判定 —— 它们「某代起就有」,5090 照样会发 `stmatrix`。
 
-形状是运行期参数,PTX 只随 tile 常量变,所以默认只跑第一个 case。**已接 triton / tilelang / cuda / tk,cute 接不上**(见 [D10](docs/03-DECISIONS.md#d10-cute-的-ptx-先不接))。加法见 `klab/harness/ptxdump.py` 的 `_COLLECTORS`。
+形状是运行期参数,PTX 只随 tile 常量变,所以默认只跑第一个 case。**五种工具链全接上了**,取法各不相同(见 [D10](docs/03-DECISIONS.md#d10-cute-的-ptx-怎么取2026-09-20-解决))。加法见 `klab/harness/ptxdump.py` 的 `_COLLECTORS`。
 
 ## Modal 后端
 

@@ -17,6 +17,7 @@ cuda / tk 用 `load_extension(...)` 编译 kernels/<名>/ 下的 .cu。
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -32,11 +33,21 @@ def kernel_dir_of(spec_dir: Path) -> Path:
     return repo_root_of(spec_dir) / "kernels" / spec_dir.name
 
 
+def override_file() -> Path | None:
+    """`--solution` 把要跑的算子换成参考答案里的那一份,路径经 KLAB_KERNEL_FILE 传进来。
+
+    这样验证阶梯不用往 `kernels/<名>/` 里拷东西 —— 那是用户的目录,拷进去就等于
+    替他改代码,而且改完常常忘了还原(这个仓库真出过这事)。
+    """
+    v = os.environ.get("KLAB_KERNEL_FILE")
+    return Path(v) if v else None
+
+
 def kernel_module(spec_file: str, filename: str = "kernel.py") -> ModuleType:
     """给 spec.py 用:导入同名 kernels/<名>/<filename>,并把该目录放进 sys.path(用户的算子可以拆多文件)。"""
     spec_dir = Path(spec_file).resolve().parent
     kdir = kernel_dir_of(spec_dir)
-    path = kdir / filename
+    path = override_file() or kdir / filename
     if not path.exists():
         raise SystemExit(f"用户算子文件不存在:{path}")
     if str(kdir) not in sys.path:

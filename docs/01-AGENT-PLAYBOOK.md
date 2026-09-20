@@ -104,7 +104,14 @@ uv run klab run <名> --target modal-h100   # 换后端,其余不变
 - **走官方推荐的路**,判定表见 [CLAUDE.md 定位节](../CLAUDE.md#定位写参考答案前必读)。
 - **结论必须实测**,没收益就写没收益并解释为什么。现成的反例可以照着学:`cuda/2-smem`(慢 10%)、`cuda/4-doublebuf`(持平)、`triton/3-splitk`(越切越慢)、`tilelang/1-swizzle`(没用)。
 - **换代类的答案必须 `klab ptx` 验过指令真的换了**,这是唯一的证据。
-- 写完一级的验收:`pytest` → `klab run` → `klab ptx` → 数字进 docstring。
+- 写完一级的验收(**全程用 `--solution`,不要把答案拷进 `kernels/`**):
+
+  ```bash
+  uv run klab run <算子> -s <序号-名字> --target <该级需要的卡>
+  uv run klab ptx <算子> -s <序号-名字> --target <同上>
+  ```
+
+  再加 `uv run pytest`,然后把实测数字写进那一级的 docstring。
 
 ## 6. 不做的事
 
