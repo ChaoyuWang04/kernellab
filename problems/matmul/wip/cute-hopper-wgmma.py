@@ -26,10 +26,31 @@
   覆盖的大**,但上面的 cosize 又说没有空洞 —— 这两条对不上,是下一步的突破口。
 - N=128 换成 N=64(避开描述符把 N 切成两块)也没用。
 
+## 最可能的原因(2026-09-24 提出,**还没验过**)
+
+**swizzle 只在一侧生效。**
+
+1. wgmma 要求 swizzle 挂在**指针**上、layout 保持仿射(编译器会直接报
+   `Expected affine layout ... use recast_ptr`),所以下面把 `make_smem_layout_a/b`
+   返回的 ComposedLayout 拆成了 `allocate_tensor(dtype, lA.outer, swizzle=lA.inner)`。
+2. 写 `sA0[m,k]` 时地址是 `swizzle(layout(m,k))`;而 wgmma 的描述符**自己在硬件里
+   编码了一个 swizzle 模式**。两者若不一致(比如 `partition_D` 组合时把它吃掉了,
+   或描述符是从**剥掉 swizzle 的那个 layout** 推出来的),两边就各读各的排列。
+3. **swizzle 本质是对几个地址位做 XOR —— 那几位本来是 0 时,XOR 是空操作。**
+   这解释了一个当时看着矛盾的现象:手算验证过的 acc[0..3] 对应
+   C[0,0]/C[0,1]/C[8,0]/C[8,1],**全在 tile 左上角,正是 XOR 不生效的区域**。
+   「抽查对了」和「整体错 13%」因此不冲突,反而互证。
+4. 它同时能解释下面那条唯一对不上的矛盾:去掉 fill 就 NaN(wgmma 读到了没写过的地方),
+   而 cosize 又说没有空洞 —— 两边地址函数不同的话,这两条同时成立。
+
+**怎么验**:把完整的 ComposedLayout 直接交给拷贝的目的端(而不是拆开后的 `.outer`),
+看错误率变不变。一次跑就能证伪 —— 变了说明方向对,一点不变就排除掉、把结论补写在这里。
+
 ## 下次接手的建议
 
-1. 先解释「去掉 fill 就 NaN」与「cosize 没空洞」的矛盾 —— 多半是
-   `make_tiled_copy_tv` 的 partition_D 在 swizzle 布局上的行为和我理解的不同。
+1. 先验上面那个 swizzle 假设。它没中的话,再去解释「去掉 fill 就 NaN」与
+   「cosize 没空洞」的矛盾 —— 多半仍在 `make_tiled_copy_tv` 的 partition_D
+   在 swizzle 布局上的行为。
 2. 找一份官方的 CuTe DSL Hopper dense GEMM 示例逐行比对。pip 包里不带示例,
    要去 NVIDIA/cutlass 仓库的 examples/python 下找。
 3. 已经确认的 API 用法都在下面,照抄即可:

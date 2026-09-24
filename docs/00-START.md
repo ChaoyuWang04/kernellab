@@ -2,7 +2,11 @@
 
 Mac 上写 GPU 算子,远端 GPU 上编译、跑、测速、抓 NCU,结果回流成一张固定模板的体检单。日常入口是 `klab web`(算子版 LeetCode),CLI 是它的全集。
 
-现在的规模:**一道题**(matmul)× **五种语言**(triton / tilelang / cuda / cute / tk)× **四张卡**(sm_80 / 90 / 100 / 120)× **六档形状**,18 份参考答案,全部上机验证过。
+现在的规模:**一道题**(matmul)× **五种语言**(triton / tilelang / cuda / cute / tk)× **四张卡**(sm_80 / 90 / 100 / 120)× **六档形状**,**30 份参考答案**,全部上机验证过。
+
+换代矩阵 15 格里 13 格有解,只差 cute 的 Hopper / Blackwell(见 [02-NEXT.md](02-NEXT.md) 第 1 项)。
+最完整的两条线:tk 在 B200 上 170.98 → **1355.73 TFLOPS**(0.91× cuBLAS,8192³ 上 0.99×);
+cuda 走 CUTLASS 改四行参数直接 **1387.71 TFLOPS**。
 
 | 要什么 | 去哪 |
 |---|---|
