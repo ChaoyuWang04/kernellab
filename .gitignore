@@ -6,3 +6,6 @@ runs/*
 .klab-cache/
 envs/tk/ThunderKittens/
 klab/webui/vendor/
+
+# 本机参考资料(别人的仓库与文档),不进本仓库
+KDA/
